@@ -1,0 +1,3 @@
+Another example of a standard text document. 
+Weather is nice today, perfect for a walk in the park.
+Let's write some more sentences.

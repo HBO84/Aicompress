@@ -1,0 +1,51 @@
+# Environnement virtuel Python
+aic_env/
+venv/
+env/
+*.venv
+
+# Fichiers de cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Fichiers générés par les IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Fichiers de modèles volumineux ou données temporaires
+# (À vous de décider si vous voulez versionner vos .keras et .joblib entraînés)
+# Si vos modèles sont petits et essentiels au fonctionnement de la version alpha,
+# vous pourriez les versionner. Sinon, si ce sont des produits d'entraînement
+# que vous pouvez régénérer ou que vous distribuez via OTA, ignorez-les.
+# Pour l'instant, on pourrait les garder, sauf s'ils sont énormes.
+# *.keras
+# *.joblib 
+# (Attention: compression_orchestrator_model.joblib et orchestrator_label_encoder.joblib sont dans aicompress/
+#  donc le pattern ci-dessus ne les ignorerait pas directement s'ils ne sont pas à la racine)
+# Pour ignorer les modèles dans aicompress/ spécifiquement :
+# aicompress/*.keras
+# aicompress/*.joblib 
+# (Mais pour l'instant, gardons-les pour que le projet soit fonctionnel depuis un clone)
+
+# Fichiers de dataset générés (peuvent être volumineux)
+*.csv 
+# (Sauf si vous voulez versionner un petit CSV d'exemple)
+# Si votre compression_decision_dataset.csv est petit, vous pouvez le garder.
+
+# Fichiers temporaires de test
+test_sample.*
+temp_test_code.py
+temp_analyzer_test_files/
+
+# Fichiers de sauvegarde de modèles OTA
+*.bak
+
+# Fichiers de log système ou d'application (si vous en générez)
+*.log
+
+# Fichiers spécifiques à l'OS
+.DS_Store
+Thumbs.db
