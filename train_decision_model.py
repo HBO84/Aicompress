@@ -13,8 +13,11 @@ import numpy as np
 
 # --- Configuration ---
 DATASET_CSV_PATH = "compression_decision_dataset.csv"
-MODEL_SAVE_PATH = os.path.join("aicompress", "compression_orchestrator_model.joblib") # Sauvegarder dans le module
-PREPROCESSOR_SAVE_PATH = os.path.join("aicompress", "orchestrator_preprocessor.joblib") # Sauvegarder le préprocesseur
+# Sauvegarder les modèles dans le dossier 'aicompress' pour qu'ils soient packagés avec
+MODEL_DIR = os.path.join("aicompress") 
+MODEL_SAVE_PATH = os.path.join(MODEL_DIR, "compression_orchestrator_model.joblib")
+LABEL_ENCODER_SAVE_PATH = os.path.join(MODEL_DIR, "orchestrator_label_encoder.joblib")
+# PREPROCESSOR_SAVE_PATH = os.path.join(MODEL_DIR, "orchestrator_preprocessor.joblib") # Le préprocesseur est dans le pipeline
 
 def train_orchestrator_model():
     print(f"Chargement du jeu de données depuis : {DATASET_CSV_PATH}")
@@ -23,35 +26,45 @@ def train_orchestrator_model():
         print("Veuillez d'abord exécuter 'create_decision_dataset.py'.")
         return
 
-    df = pd.read_csv(DATASET_CSV_PATH)
+    try:
+        df = pd.read_csv(DATASET_CSV_PATH)
+    except Exception as e:
+        print(f"ERREUR: Impossible de charger le fichier CSV '{DATASET_CSV_PATH}': {e}")
+        return
+        
     print(f"Jeu de données chargé : {df.shape[0]} lignes, {df.shape[1]} colonnes.")
     print("\nAperçu des premières lignes :")
     print(df.head())
 
-    # Nettoyage simple : supprimer les lignes où la meilleure méthode n'a pas pu être déterminée
-    # ou où la taille/temps sont invalides (ex: si on a gardé des -1 ou infini)
-    # Ici, on suppose que create_decision_dataset.py a déjà bien filtré.
-    # On va juste s'assurer que best_method n'est pas N/A
+    # Nettoyage simple
     df.dropna(subset=['best_method', 'original_size_bytes', 'entropy_normalized', 'file_type_analysis'], inplace=True)
     df = df[df['best_method'] != "N/A"]
-    
+    # S'assurer que les colonnes numériques sont bien numériques et sans infini/NaN après chargement
+    df['original_size_bytes'] = pd.to_numeric(df['original_size_bytes'], errors='coerce')
+    df['entropy_normalized'] = pd.to_numeric(df['entropy_normalized'], errors='coerce')
+    df.dropna(subset=['original_size_bytes', 'entropy_normalized'], inplace=True)
+
     if df.empty:
         print("ERREUR: Le jeu de données est vide après nettoyage ou ne contient pas de 'best_method' valide.")
         return
 
-    print(f"\nNombre de lignes après nettoyage simple : {df.shape[0]}")
+    print(f"\nNombre de lignes après nettoyage : {df.shape[0]}")
+    if df.shape[0] < 10: # Seuil arbitraire pour un dataset minimal
+        print("ERREUR: Pas assez de données valides pour l'entraînement après nettoyage.")
+        return
 
     # --- 1. Préparation des Caractéristiques (X) et de la Cible (y) ---
-    # Caractéristiques à utiliser pour la prédiction
-    # 'relative_path' n'est pas une feature, 'best_compressed_size_bytes' et 'best_time_ms' sont des résultats, pas des features.
-    # De même pour les colonnes individuelles taille/temps de chaque méthode.
-    features_cols = ['file_type_analysis', 'original_size_bytes', 'entropy_normalized']
+    features_cols = ['file_type_analysis', 'original_size_bytes', 'entropy_normalized', "quick_comp_ratio"]
     target_col = 'best_method'
+
+    if not all(col in df.columns for col in features_cols + [target_col]):
+        print(f"ERREUR: Colonnes manquantes dans le CSV. Attendu: {features_cols + [target_col]}")
+        print(f"Colonnes présentes: {df.columns.tolist()}")
+        return
 
     X = df[features_cols]
     y_original_labels = df[target_col]
 
-    # Encodage de la cible (les noms des méthodes) en entiers
     label_encoder_target = LabelEncoder()
     y = label_encoder_target.fit_transform(y_original_labels)
     
@@ -61,53 +74,67 @@ def train_orchestrator_model():
         print(f"  {i}: {class_name}")
 
     # --- 2. Prétraitement des Caractéristiques ---
-    # 'file_type_analysis' est catégorielle -> One-Hot Encoding
-    # 'original_size_bytes', 'entropy_normalized' sont numériques -> Standard Scaling
-    
-    numerical_features = ['original_size_bytes', 'entropy_normalized']
+    numerical_features = ['original_size_bytes', 'entropy_normalized',"quick_comp_ratio"]
     categorical_features = ['file_type_analysis']
 
-    # Créer le transformateur pour les features numériques
     numerical_transformer = StandardScaler()
-
-    # Créer le transformateur pour les features catégorielles
-    # handle_unknown='ignore' : si une nouvelle catégorie apparaît en prédiction, elle sera encodée comme des zéros
     categorical_transformer = OneHotEncoder(handle_unknown='ignore', sparse_output=False) 
 
-    # Combiner les transformateurs avec ColumnTransformer
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', numerical_transformer, numerical_features),
             ('cat', categorical_transformer, categorical_features)
         ], 
-        remainder='passthrough' # Garder les autres colonnes si on en ajoutait, mais ici on ne spécifie que celles à transformer
+        remainder='passthrough' 
     )
 
     # --- 3. Division des Données ---
-    X_train, X_test, y_train, y_test, y_train_labels, y_test_labels = train_test_split(
-        X, y, y_original_labels, test_size=0.25, random_state=42  # Stratify pour garder la proportion des classes
-    )
+    # Note: `stratify=y` a été retiré car il causait une erreur avec les petites classes dans votre dataset.
+    # Pour un dataset plus grand et équilibré, il serait bon de le réactiver.
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.25, random_state=42 # stratify=y (retiré pour l'instant)
+        )
+    except ValueError as e_split:
+        print(f"Erreur lors de la division des données: {e_split}")
+        print("Cela peut arriver si le jeu de données est trop petit ou si une classe est trop peu représentée pour le test_size choisi.")
+        print("Essayez avec plus de données ou sans stratification.")
+        return
+
     print(f"\nTaille de l'ensemble d'entraînement : {X_train.shape[0]}")
     print(f"Taille de l'ensemble de test : {X_test.shape[0]}")
 
-    # --- 4. Création du Pipeline avec Prétraitement et Modèle ---
-    # RandomForestClassifier est un bon point de départ
-    model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-    # class_weight='balanced' peut aider si certaines méthodes sont beaucoup plus fréquentes que d'autres
+    if X_train.shape[0] == 0 or X_test.shape[0] == 0:
+        print("ERREUR: Ensembles d'entraînement ou de test vides. Vérifiez la taille de votre dataset et le `test_size`.")
+        return
 
-    # Pipeline complet
+    # --- 4. Création du Pipeline avec Prétraitement et Modèle ---
+    model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced', n_jobs=-1)
+    # n_jobs=-1 utilise tous les processeurs disponibles pour l'entraînement
+
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
                                ('classifier', model)])
 
     # --- 5. Entraînement du Modèle ---
     print("\nDébut de l'entraînement du modèle 'Chef d'Orchestre'...")
-    pipeline.fit(X_train, y_train)
-    print("Entraînement terminé.")
+    try:
+        pipeline.fit(X_train, y_train)
+        print("Entraînement terminé.")
+    except Exception as e_fit:
+        print(f"ERREUR pendant l'entraînement du pipeline: {e_fit}")
+        import traceback
+        print(traceback.format_exc())
+        return
+
 
     # --- 6. Évaluation du Modèle ---
     print("\n--- Évaluation du Modèle ---")
-    y_pred_train = pipeline.predict(X_train)
-    y_pred_test = pipeline.predict(X_test)
+    try:
+        y_pred_train = pipeline.predict(X_train)
+        y_pred_test = pipeline.predict(X_test)
+    except Exception as e_pred:
+        print(f"ERREUR pendant la prédiction: {e_pred}")
+        return
 
     train_accuracy = accuracy_score(y_train, y_pred_train)
     test_accuracy = accuracy_score(y_test, y_pred_test)
@@ -116,50 +143,73 @@ def train_orchestrator_model():
     print(f"Précision (Accuracy) sur l'ensemble de test : {test_accuracy:.4f}")
 
     print("\nRapport de Classification sur l'ensemble de test :")
-    # Pour afficher les noms des classes dans le rapport au lieu des entiers :
     target_names_for_report = label_encoder_target.classes_
-    print(classification_report(y_test, y_pred_test, target_names=target_names_for_report, zero_division=0))
+    # Correction pour classification_report: spécifier les labels pour inclure toutes les classes apprises par LabelEncoder
+    labels_for_report = np.arange(len(target_names_for_report))
     
-    # print("\nMatrice de Confusion sur l'ensemble de test :")
-    # conf_matrix = confusion_matrix(y_test, y_pred_test)
-    # print(conf_matrix) # Peut être difficile à lire si beaucoup de classes
-    # On pourrait l'afficher avec matplotlib plus tard si besoin
+    # S'assurer que y_test et y_pred_test ne contiennent que des labels connus par labels_for_report
+    # Cela peut arriver si le split a isolé des classes.
+    # Pour une solution robuste, on peut filtrer les labels inconnus ou s'assurer que `labels` contient tous les labels uniques de y_test et y_pred_test
+    unique_labels_in_data = np.unique(np.concatenate((y_test, y_pred_test)))
+    filtered_target_names = [target_names_for_report[i] for i in unique_labels_in_data if i < len(target_names_for_report)]
+    
+    # Si on veut un rapport pour TOUTES les classes apprises, même celles avec 0 support dans le test set:
+    # Il faut s'assurer que `labels` dans classification_report correspond bien aux classes possibles
+    # et que `target_names` a la même longueur.
+    # La solution est d'utiliser les labels dérivés de label_encoder_target.classes_
+    
+    try:
+        print(classification_report(y_test, y_pred_test, 
+                                    labels=labels_for_report, # Tous les labels que le modèle peut prédire
+                                    target_names=target_names_for_report, 
+                                    zero_division=0))
+    except ValueError as e_report: # Au cas où il y aurait encore un décalage
+        print(f"Erreur dans classification_report: {e_report}")
+        print("Tentative de rapport avec les labels présents dans y_test et y_pred_test...")
+        try:
+            # Utiliser seulement les labels présents dans les données de test et prédictions
+            present_labels = np.unique(np.concatenate((y_test,y_pred_test)))
+            present_target_names = label_encoder_target.inverse_transform(present_labels)
+            print(classification_report(y_test, y_pred_test, 
+                                        labels=present_labels,
+                                        target_names=present_target_names,
+                                        zero_division=0))
+        except Exception as e_report_fallback:
+            print(f"Échec du rapport de classification fallback: {e_report_fallback}")
 
-    # Importance des caractéristiques (si RandomForest)
-    # Note: L'importance est calculée sur les features après OneHotEncoding
+
     try:
         feature_importances = pipeline.named_steps['classifier'].feature_importances_
-        
-        # Obtenir les noms des features après ColumnTransformer
-        # Pour les features one-hot encodées, get_feature_names_out() est utile
         one_hot_feature_names = list(pipeline.named_steps['preprocessor']
                                      .named_transformers_['cat']
                                      .get_feature_names_out(categorical_features))
-        
         all_feature_names = numerical_features + one_hot_feature_names
         
         print("\nImportance des Caractéristiques :")
-        for score, name in sorted(zip(feature_importances, all_feature_names), reverse=True):
-            print(f"  {name}: {score:.4f}")
+        # S'assurer que le nombre de features correspond
+        if len(feature_importances) == len(all_feature_names):
+            for score, name in sorted(zip(feature_importances, all_feature_names), key=lambda x: x[0], reverse=True):
+                print(f"  {name}: {score:.4f}")
+        else:
+            print(f"  Avertissement: Le nombre d'importances ({len(feature_importances)}) ne correspond pas au nombre de noms de features ({len(all_feature_names)}).")
+            print(f"  Importances brutes: {feature_importances}")
+
     except Exception as e_feat:
         print(f"  Impossible d'afficher l'importance des features: {e_feat}")
 
-
-    # --- 7. Sauvegarde du Pipeline (Préprocesseur + Modèle) et de l'Encodeur de Label ---
-    print(f"\nSauvegarde du pipeline (préprocesseur + modèle) sous : {MODEL_SAVE_PATH}")
-    joblib.dump(pipeline, MODEL_SAVE_PATH)
-    
-    # Sauvegarder aussi l'encodeur de label pour pouvoir décoder les prédictions plus tard
-    label_encoder_save_path = os.path.join(os.path.dirname(MODEL_SAVE_PATH), "orchestrator_label_encoder.joblib")
-    joblib.dump(label_encoder_target, label_encoder_save_path)
-    print(f"Encodeur de label sauvegardé sous : {label_encoder_save_path}")
-    
-    # Le préprocesseur est inclus dans le pipeline, mais si on voulait le sauvegarder séparément :
-    # print(f"Sauvegarde du préprocesseur sous : {PREPROCESSOR_SAVE_PATH}")
-    # joblib.dump(preprocessor, PREPROCESSOR_SAVE_PATH) # Déjà dans le pipeline
-
-    print("\nModèle 'Chef d'Orchestre' et composants associés sauvegardés.")
-    print("Vous pouvez maintenant intégrer ce modèle dans aicompress/core.py (get_compression_settings).")
+    # --- 7. Sauvegarde du Pipeline et de l'Encodeur de Label ---
+    try:
+        os.makedirs(MODEL_DIR, exist_ok=True) # S'assurer que le dossier aicompress/ existe
+        print(f"\nSauvegarde du pipeline (préprocesseur + modèle) sous : {MODEL_SAVE_PATH}")
+        joblib.dump(pipeline, MODEL_SAVE_PATH)
+        
+        print(f"Sauvegarde de l'encodeur de label sous : {LABEL_ENCODER_SAVE_PATH}")
+        joblib.dump(label_encoder_target, LABEL_ENCODER_SAVE_PATH)
+        
+        print("\nModèle 'Chef d'Orchestre' et composants associés sauvegardés dans le dossier 'aicompress/'.")
+        print("Vous pouvez maintenant intégrer ce modèle dans aicompress/core.py (get_compression_settings).")
+    except Exception as e_save:
+        print(f"ERREUR lors de la sauvegarde des modèles: {e_save}")
 
 if __name__ == '__main__':
     if not os.path.exists(DATASET_CSV_PATH):

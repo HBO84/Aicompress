@@ -11,7 +11,7 @@ import bz2
 import lzma
 import numpy as np
 import zlib # Pour une alternative à zipfile.compress si Python < 3.7 ou pour plus de contrôle
-
+import zstandard as zstd
 # Importer les modules nécessaires d'AICompress
 try:
     from aicompress.ai_analyzer import get_file_features, _default_log_analyzer as log
@@ -62,6 +62,18 @@ def lzma_wrapper(data_bytes, params):
         log(f"    Erreur lzma.compress P{valid_preset}: {e}")
         return None
 
+def zstd_compress_wrapper(data_bytes, params):
+    level = params.get("level", 3) # Niveau par défaut Zstd (bon équilibre)
+    # Zstd a des niveaux de 1 (rapide) à 22 (ultra). 
+    # Les négatifs sont aussi pour plus de vitesse. On va utiliser des positifs.
+    valid_level = max(1, min(22, level)) 
+    try:
+        cctx = zstd.ZstdCompressor(level=valid_level,threads=-1)
+        return cctx.compress(data_bytes)
+    except Exception as e:
+        log(f"    Erreur zstd.compress L{valid_level}: {e}") # Assurez-vous que 'log' est défini (vient de ai_analyzer)
+        return None
+
 # --- Moteurs de Compression à Tester ---
 COMPRESSION_METHODS_SETUP = [
     {"name": "STORED",       "func": stored_wrapper,         "params": {}},
@@ -72,6 +84,10 @@ COMPRESSION_METHODS_SETUP = [
     {"name": "LZMA_P0",      "func": lzma_wrapper,           "params": {"preset_level": 0}},
     {"name": "LZMA_P6",      "func": lzma_wrapper,           "params": {"preset_level": 6}},
     {"name": "LZMA_P9",      "func": lzma_wrapper,           "params": {"preset_level": 9}},
+    {"name": "ZSTD_L1",      "func": zstd_compress_wrapper,  "params": {"level": 1}},   # Très rapide
+    {"name": "ZSTD_L3",      "func": zstd_compress_wrapper,  "params": {"level": 3}},   # Défaut Zstd, bon équilibre
+    {"name": "ZSTD_L9",      "func": zstd_compress_wrapper,  "params": {"level": 9}},   # Bon et rapide
+    {"name": "ZSTD_L15",     "func": zstd_compress_wrapper,  "params": {"level": 15}},  # Plus fort, plus lent
     # {"name": "AE_CIFAR10_COLOR", "func": compress_with_ae_cifar10, "params": {"requires_filepath": True}}, # Laissé pour plus tard
 ]
 
@@ -86,7 +102,7 @@ def generate_dataset():
         log(f"Veuillez le créer et y placer des fichiers variés."); return
 
     header = ["relative_path", "file_type_analysis", "original_size_bytes", "entropy_normalized", 
-              "best_method", "best_compressed_size_bytes", "best_time_ms"]
+              "best_method", "best_compressed_size_bytes", "best_time_ms", "quick_comp_ratio"]
     for method_info in COMPRESSION_METHODS_SETUP:
         header.extend([f"{method_info['name']}_size_bytes", f"{method_info['name']}_time_ms"])
 

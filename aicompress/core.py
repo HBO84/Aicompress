@@ -13,27 +13,24 @@ import zlib
 def _default_log(message):
     print(message)
 
-# --- Imports Conditionnels ---
+# --- Imports Conditionnels pour les Fonctionnalités ---
 try: from PIL import Image, ImageOps; PIL_AVAILABLE = True
 except ImportError: PIL_AVAILABLE = False; _default_log("AVERTISSEMENT (core.py): Pillow non trouvée.")
 
 try: import tensorflow as tf; KERAS_AVAILABLE = True
 except ImportError: KERAS_AVAILABLE = False; _default_log("AVERTISSEMENT (core.py): TensorFlow/Keras non trouvé.")
 
-# --- Bloc d'import pour ai_analyzer ---
 AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE = False 
 def _fallback_analyze_file_content(file_path, log_callback=_default_log):
     log_callback(f"[CORE_FALLBACK] Utilisation de analyze_file_content factice.")
     return "analyzer_unavailable"
 analyze_file_content = _fallback_analyze_file_content
-
 def _fallback_get_file_features(file_path, log_callback=_default_log):
     log_callback(f"[CORE_FALLBACK] Utilisation de get_file_features factice.")
     return {"type": "analyzer_unavailable", 
             "size_bytes": os.path.getsize(file_path) if os.path.exists(file_path) else 0, 
             "entropy_normalized": 0.0, "error": True}
 get_file_features = _fallback_get_file_features
-
 try:
     from .ai_analyzer import (get_file_features as _real_get_file_features,
                               analyze_file_content as _real_analyze_file_content, 
@@ -41,12 +38,11 @@ try:
     get_file_features = _real_get_file_features
     analyze_file_content = _real_analyze_file_content
     AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE = _analyzer_status_from_module 
-    if AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE: _default_log("[CORE] AI Analyzer (get_file_features & analyze_file_content) importé et disponible.")
+    if AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE: _default_log("[CORE] AI Analyzer importé et disponible.")
     else: _default_log("[CORE] AI Analyzer importé mais marqué non disponible par ai_analyzer.py.")
-except ImportError as e_imp_analyzer: _default_log(f"AVERTISSEMENT (core.py): Échec de l'import de ai_analyzer. Erreur originale: {e_imp_analyzer}")
-except Exception as e_other_analyzer: _default_log(f"AVERTISSEMENT (core.py): Erreur inattendue à l'import de ai_analyzer. Erreur: {e_other_analyzer}")
+except ImportError as e_imp_analyzer: _default_log(f"AVERTISSEMENT (core.py): Échec import ai_analyzer. Erreur: {e_imp_analyzer}")
+except Exception as e_other_analyzer: _default_log(f"AVERTISSEMENT (core.py): Erreur import ai_analyzer. Erreur: {e_other_analyzer}")
 AI_ANALYZER_AVAILABLE = AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE
-
 
 try: import rarfile; RARFILE_AVAILABLE = True
 except ImportError: RARFILE_AVAILABLE = False; _default_log("AVERTISSEMENT (core.py): rarfile non installée.")
@@ -57,6 +53,15 @@ try:
     from cryptography.hazmat.primitives import hashes; from cryptography.hazmat.backends import default_backend
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError: CRYPTOGRAPHY_AVAILABLE = False; _default_log("AVERTISSEMENT (core.py): 'cryptography' non trouvée.")
+
+try: # NOUVEL IMPORT ZSTANDARD
+    import zstandard as zstd 
+    ZSTD_AVAILABLE = True
+    _default_log("[CORE] Bibliothèque Zstandard (zstd) chargée.")
+except ImportError:
+    ZSTD_AVAILABLE = False
+    _default_log("AVERTISSEMENT (core.py): Bibliothèque 'zstandard' non trouvée. Compression Zstd désactivée.")
+
 
 # ---- Constantes et Variables Globales ----
 METADATA_FILENAME = "aicompress_metadata.json"; DEFAULT_AIC_EXTENSION = ".aic"
@@ -89,7 +94,6 @@ def load_orchestrator_model(log_callback=_default_log):
         log_callback(f"[CORE_ORCH] Traceback: {traceback.format_exc()}"); orchestrator_loaded_successfully = False; return False
 
 if load_orchestrator_model_flag_unused := load_orchestrator_model(_default_log): pass
-
 
 def _derive_key(password: str, salt: bytes) -> bytes | None:
     if not password: return None
@@ -166,11 +170,11 @@ def get_compression_settings(file_path, analysis_result_str_ignored, log_callbac
             log_callback("[CORE] ERREUR CRITIQUE: Modèle orchestrateur non chargeable. DEFLATE L6 par défaut.")
             return zipfile.ZIP_DEFLATED, 6 
 
-    if not AI_ANALYZER_AVAILABLE: # Utilise le flag global mis à jour
+    if not AI_ANALYZER_AVAILABLE: 
         log_callback("[CORE] AI Analyzer non disponible pour extraction de features. DEFLATE L6 par défaut.")
         return zipfile.ZIP_DEFLATED, 6
         
-    features = get_file_features(file_path, log_callback=log_callback) # Utilise la fonction get_file_features importée (ou son fallback)
+    features = get_file_features(file_path, log_callback=log_callback)
     if features.get("error"):
         log_callback(f"[CORE] Erreur extraction features pour {file_path}. DEFLATE L6 par défaut.")
         return zipfile.ZIP_DEFLATED, 6
@@ -180,7 +184,8 @@ def get_compression_settings(file_path, analysis_result_str_ignored, log_callbac
         input_df = pd.DataFrame([{
             "file_type_analysis": features["type"], 
             "original_size_bytes": features["size_bytes"],
-            "entropy_normalized": features["entropy_normalized"]
+            "entropy_normalized": features["entropy_normalized"],
+            "quick_comp_ratio": features["quick_comp_ratio"]
         }])
         log_callback(f"[CORE_ORCH] DataFrame d'entrée pour prédiction: {input_df.to_dict(orient='records')}")
     except ImportError: log_callback("[CORE] Pandas non trouvé. Fallback DEFLATE L6."); return zipfile.ZIP_DEFLATED, 6
@@ -192,6 +197,7 @@ def get_compression_settings(file_path, analysis_result_str_ignored, log_callbac
         log_callback(f"[CORE_ORCH] Méthode prédite par IA pour '{os.path.basename(file_path)}': {predicted_method_name}")
     except Exception as e_predict: log_callback(f"[CORE_ORCH] Erreur prédiction: {e_predict}. Fallback DEFLATE L6."); return zipfile.ZIP_DEFLATED, 6
 
+    # Interpréter la méthode prédite
     if predicted_method_name == "STORED": return zipfile.ZIP_STORED, None
     elif predicted_method_name.startswith("DEFLATE_L"):
         try: level = int(predicted_method_name.split("DEFLATE_L")[1]); return zipfile.ZIP_DEFLATED, level
@@ -202,8 +208,29 @@ def get_compression_settings(file_path, analysis_result_str_ignored, log_callbac
     elif predicted_method_name.startswith("LZMA_P"):
         try: preset = int(predicted_method_name.split("LZMA_P")[1]); return "LZMA", preset
         except: log_callback(f"Erreur parsing LZMA: {predicted_method_name}"); return "LZMA", 6 
+    
+    # --- CAS POUR ZSTANDARD (si prédit par l'IA) ---
+    elif predicted_method_name.startswith("ZSTD_L"):
+        if not ZSTD_AVAILABLE: 
+            log_callback(f"[CORE] Zstd prédit mais lib non dispo. Fallback DEFLATE L6.")
+            return zipfile.ZIP_DEFLATED, 6
+        try: 
+            level = int(predicted_method_name.split("ZSTD_L")[1])
+            return "ZSTD", level 
+        except: 
+            log_callback(f"Erreur parsing niveau ZSTD: {predicted_method_name}. Fallback ZSTD L3.")
+            return "ZSTD", 3 
+    # --- FIN CAS ZSTANDARD ---
+
     elif predicted_method_name == "MOTEUR_AE_CIFAR10_COLOR":
         if not cifar10_models_loaded_successfully: ensure_cifar10_color_models_loaded(log_callback=log_callback)
+        # Vérifier le type réel du fichier ici aussi, car l'IA orchestrateur se base sur les features générales
+        analysis_for_ae_check = features["type"] # Utiliser le type déjà analysé
+        image_types_for_cifar_ae = ["jpeg_image", "png_image", "bmp_image", "tiff_image", "webp_image"]
+        if analysis_for_ae_check not in image_types_for_cifar_ae:
+            log_callback(f"[CORE] IA prédit AE, mais type '{analysis_for_ae_check}' non image pour AE. Fallback DEFLATE L1.")
+            return zipfile.ZIP_DEFLATED, 1
+
         if PIL_AVAILABLE and KERAS_AVAILABLE and cifar10_models_loaded_successfully:
             try: 
                 with Image.open(file_path) as img: width, height = img.size
@@ -214,17 +241,16 @@ def get_compression_settings(file_path, analysis_result_str_ignored, log_callbac
         else: log_callback(f"[CORE] IA prédit AE, mais dépendances non dispo. Fallback DEFLATE L1."); return zipfile.ZIP_DEFLATED, 1
     else: log_callback(f"[CORE] Méthode prédite '{predicted_method_name}' non gérée. Fallback DEFLATE L6."); return zipfile.ZIP_DEFLATED, 6
 
+# --- Fonction Helper _process_and_add_file_to_aic ---
 def _process_and_add_file_to_aic(zf, file_path_on_disk, arcname_to_use, password_compress, log_callback=_default_log):
     item_basename = os.path.basename(file_path_on_disk)
-    item_meta = {
-        "original_name": arcname_to_use, "status": "processed", "analysis": "N/A", 
-        "size_original_bytes": os.path.getsize(file_path_on_disk), "compression_method_used": "N/A", 
-        "compression_params": None, "encrypted": False, "crypto_salt_hex": None, 
-        "crypto_iv_hex": None, "crypto_tag_hex": None, "original_image_dims": None, 
-        "latent_quant_params": None, "latent_shape_info": None
-    }
+    item_meta = { "original_name": arcname_to_use, "status": "processed", "analysis": "N/A", 
+                  "size_original_bytes": os.path.getsize(file_path_on_disk), "compression_method_used": "N/A", 
+                  "compression_params": None, "encrypted": False, "crypto_salt_hex": None, 
+                  "crypto_iv_hex": None, "crypto_tag_hex": None, "original_image_dims": None, 
+                  "latent_quant_params": None, "latent_shape_info": None }
 
-    if AI_ANALYZER_AVAILABLE: # Utiliser le flag global
+    if AI_ANALYZER_AVAILABLE: 
         item_meta["analysis"] = analyze_file_content(file_path_on_disk, log_callback=log_callback)
     
     comp_method_chosen, comp_params_chosen = get_compression_settings(file_path_on_disk, item_meta["analysis"], log_callback=log_callback)
@@ -264,6 +290,26 @@ def _process_and_add_file_to_aic(zf, file_path_on_disk, arcname_to_use, password
             preset = comp_params_chosen if isinstance(comp_params_chosen,int) else 6
             data_after_internal_comp = lzma.compress(data_to_process_further, format=lzma.FORMAT_XZ, preset=preset)
         except Exception as e_lzma: log_callback(f"[CORE] Erreur LZMA {item_basename}:{e_lzma}."); item_meta["compression_method_used"]=str(zipfile.ZIP_STORED); item_meta["compression_params"]=None
+    # --- AJOUT DE LA COMPRESSION ZSTD ---
+    elif comp_method_chosen == "ZSTD":
+        if ZSTD_AVAILABLE:
+            try:
+                level = comp_params_chosen if isinstance(comp_params_chosen, int) else 3 
+                cctx = zstd.ZstdCompressor(level=level,threads=-1)
+                data_after_internal_comp = cctx.compress(data_to_process_further)
+                log_callback(f"[CORE] {item_basename} compressé avec ZSTD (niveau {level}).")
+            except Exception as e_zstd:
+                log_callback(f"[CORE] Erreur ZSTD compression pour {item_basename}: {e_zstd}. Pas de compression interne (STORED).")
+                item_meta["compression_method_used"] = str(zipfile.ZIP_STORED) 
+                item_meta["compression_params"] = None
+                data_after_internal_comp = data_to_process_further # Garder les données originales
+        else: 
+            log_callback(f"[CORE] ZSTD non disponible. Fallback DEFLATE L1 pour {item_basename}.")
+            item_meta["compression_method_used"] = str(zipfile.ZIP_DEFLATED)
+            item_meta["compression_params"] = 1
+            comp_method_chosen = zipfile.ZIP_DEFLATED # Important pour la logique d'écriture zf.write
+            data_after_internal_comp = data_to_process_further # Garder les données originales pour DEFLATE par zf.write
+    # --- FIN AJOUT ZSTD ---
     
     data_to_write_to_zip = data_after_internal_comp
     if password_compress and data_to_write_to_zip and CRYPTOGRAPHY_AVAILABLE:
@@ -276,25 +322,30 @@ def _process_and_add_file_to_aic(zf, file_path_on_disk, arcname_to_use, password
         else: log_callback(f"[CORE] AVERT: Échec chiffrement {item_basename}.")
     
     if data_to_write_to_zip:
-        zip_compression_type_to_use = zipfile.ZIP_STORED # Par défaut si données pré-traitées (AE, BZ2, LZMA, Chiffré)
-        
-        if comp_method_chosen not in ["MOTEUR_AE_CIFAR10_COLOR", "BZIP2", "LZMA"] and not item_meta["encrypted"]:
-            # C'est du DEFLATE ou du STORED standard, on utilise zf.write qui lit le fichier original
-            if comp_method_chosen == zipfile.ZIP_DEFLATED:
-                zf.write(file_path_on_disk, arcname=final_arcname_for_zip_member, compress_type=zipfile.ZIP_DEFLATED, compresslevel=comp_params_chosen)
-            elif comp_method_chosen == zipfile.ZIP_STORED:
-                zf.write(file_path_on_disk, arcname=final_arcname_for_zip_member, compress_type=zipfile.ZIP_STORED)
-            log_callback(f"[CORE] Fichier '{item_basename}' ajouté (via zf.write) sous '{final_arcname_for_zip_member}'.")
-        else: # AE, BZ2, LZMA, ou n'importe quoi qui a été chiffré -> zf.writestr avec données en mémoire
+        # Si la compression interne (AE, BZ2, LZMA, ZSTD) ou le chiffrement a eu lieu,
+        # les données sont "préparées" et doivent être stockées sans compression ZIP supplémentaire.
+        if comp_method_chosen in ["MOTEUR_AE_CIFAR10_COLOR", "BZIP2", "LZMA", "ZSTD"] or item_meta["encrypted"]:
             zf.writestr(final_arcname_for_zip_member, data_to_write_to_zip, compress_type=zipfile.ZIP_STORED)
-            log_callback(f"[CORE] Données '{item_basename}' écrites (via zf.writestr) sous '{final_arcname_for_zip_member}'.")
+            log_callback(f"[CORE] Données (pré-traitées/chiffrées) '{item_basename}' écrites: '{final_arcname_for_zip_member}' (ZIP_STORED).")
+        # Si c'est DEFLATE ou STORED (choisi par l'IA) et non chiffré
+        elif comp_method_chosen == zipfile.ZIP_STORED and not item_meta["encrypted"]:
+            zf.write(file_path_on_disk, arcname=final_arcname_for_zip_member, compress_type=zipfile.ZIP_STORED)
+            log_callback(f"[CORE] Fichier '{item_basename}' écrit (ZIP_STORED) sous '{final_arcname_for_zip_member}'.")
+        elif comp_method_chosen == zipfile.ZIP_DEFLATED and not item_meta["encrypted"]:
+            # comp_params_chosen contient le niveau de DEFLATE
+            level = comp_params_chosen if isinstance(comp_params_chosen, int) else 6
+            zf.write(file_path_on_disk, arcname=final_arcname_for_zip_member, compress_type=zipfile.ZIP_DEFLATED, compresslevel=level)
+            log_callback(f"[CORE] Fichier '{item_basename}' écrit (DEFLATE L{level}) sous '{final_arcname_for_zip_member}'.")
+        else: # Cas de fallback ou erreur de logique (ne devrait pas arriver)
+            log_callback(f"[CORE] AVERT: Cas d'écriture non géré pour {item_basename}. Tentative writestr avec STORED.")
+            zf.writestr(final_arcname_for_zip_member, data_to_write_to_zip, compress_type=zipfile.ZIP_STORED)
     else: 
         log_callback(f"[CORE] AVERT: Pas de données à écrire pour {item_basename}.")
     
     return item_meta
 
-def compress_to_aic(input_paths, output_aic_path, password_compress=None, log_callback=_default_log):
-    log_callback(f"[CORE] Début compression AIC vers '{output_aic_path}' (Chiffré: {'Oui' if password_compress else 'Non'})...")
+def compress_to_aic(input_paths, output_aic_path, password_compress=None, log_callback=_default_log): # ... (identique à avant, utilisant _process_and_add_file_to_aic)
+    log_callback(f"[CORE] Compression AIC vers '{output_aic_path}' (Chiffré: {'Oui' if password_compress else 'Non'})...")
     all_items_metadata = []
     try:
         with zipfile.ZipFile(output_aic_path, 'w') as zf: 
@@ -310,23 +361,21 @@ def compress_to_aic(input_paths, output_aic_path, password_compress=None, log_ca
                 elif os.path.isdir(item_path_on_disk):
                     log_callback(f"[CORE] Traitement dossier: {item_basename_for_archive}")
                     dir_meta = {"original_name": item_basename_for_archive, "type_in_archive": "directory", "status": "processed", "size_original_bytes": 0}
-                    all_items_metadata.append(dir_meta) # Méta pour le dossier lui-même
+                    all_items_metadata.append(dir_meta) 
                     for root, _, files_in_dir in os.walk(item_path_on_disk):
                         for file_in_d in files_in_dir:
                             full_file_path_on_disk = os.path.join(root, file_in_d)
                             arcname_for_subfile = os.path.join(item_basename_for_archive, os.path.relpath(full_file_path_on_disk, item_path_on_disk))
                             meta_subfile = _process_and_add_file_to_aic(zf, full_file_path_on_disk, arcname_for_subfile, password_compress, log_callback)
-                            all_items_metadata.append(meta_subfile) # Ajouter les métas des sous-fichiers
-            
-            metadata_final_content = {"aicompress_version":"1.0-orchestrator-recursive","items_details":all_items_metadata, "global_encryption_hint":bool(password_compress and CRYPTOGRAPHY_AVAILABLE)}
+                            all_items_metadata.append(meta_subfile) 
+            metadata_final_content = {"aicompress_version":"1.0-orchestrator-zstd","items_details":all_items_metadata, "global_encryption_hint":bool(password_compress and CRYPTOGRAPHY_AVAILABLE)}
             zf.writestr(METADATA_FILENAME, json.dumps(metadata_final_content, indent=4))
             log_callback(f"[CORE] Métadonnées écrites. Compression AIC terminée: '{output_aic_path}'"); return True, "Success"
     except Exception as e: log_callback(f"[CORE] ERREUR MAJEURE compression: {e}"); import traceback; log_callback(f"[CORE] Traceback: {traceback.format_exc()}"); return False, f"Error: {e}"
 
 def decompress_aic(aic_file_path, output_extract_path, password_decompress=None, log_callback=_default_log):
     # ... (La fonction decompress_aic complète et corrigée de la réponse précédente va ici)
-    # ... (Celle qui commence par [CORE_DECOMP] >>> Début Décompression AIC: ...)
-    # ... (Elle est longue, donc je la suppose ici pour la concision de cette réponse, mais elle doit être présente)
+    # ... (Elle doit maintenant gérer la décompression ZSTD si la méthode est "ZSTD")
     log_callback(f"[CORE_DECOMP] >>> Début Décompression AIC: '{aic_file_path}' vers '{output_extract_path}' (Mdp: {'Oui' if password_decompress else 'Non'})")    
     if not os.path.exists(aic_file_path): log_callback(f"[CORE_DECOMP] ERREUR: Archive '{aic_file_path}' non trouvée."); return False, "FileNotFound"
     try:
@@ -343,10 +392,10 @@ def decompress_aic(aic_file_path, output_extract_path, password_decompress=None,
                     return False, f"ZipFallbackError: {e_zip_fb}"
                 except Exception as e_gen_fb: return False, f"ZipFallbackGenericError: {e_gen_fb}"
             if not (metadata_loaded_successfully and "items_details" in metadata):
-                log_callback("[CORE_DECOMP] AVERT: Métadonnées invalides/absentes. Fin anormale."); return False, "InvalidMetadata" # Changé pour ne pas faire extractall ici
+                log_callback("[CORE_DECOMP] AVERT: Métadonnées invalides/absentes. Fin anormale."); return False, "InvalidMetadata"
             
             log_callback(f"[CORE_DECOMP] Traitement {len(metadata.get('items_details', []))} items des métadonnées...")
-            files_written_by_custom_logic_paths = set()
+            files_written_this_session = set() 
 
             for item_meta in metadata["items_details"]:
                 original_arcname = item_meta.get("original_name")
@@ -354,16 +403,21 @@ def decompress_aic(aic_file_path, output_extract_path, password_decompress=None,
                 output_final_path = os.path.join(output_extract_path, original_arcname)
                 log_callback(f"[CORE_DECOMP] Prépa item méta: '{original_arcname}' -> '{output_final_path}'")
                 if item_meta.get("status")=="not_found": log_callback(f" Ignoré (not_found): {original_arcname}"); continue
-                if item_meta.get("type_in_archive")=="directory": log_callback(f" Création dossier: {output_final_path}"); os.makedirs(output_final_path,exist_ok=True); files_written_by_custom_logic_paths.add(output_final_path); continue
+                if item_meta.get("type_in_archive")=="directory": log_callback(f" Création dossier: {output_final_path}"); os.makedirs(output_final_path,exist_ok=True); files_written_this_session.add(output_final_path); continue
 
                 comp_method = item_meta.get("compression_method_used"); is_encrypted = item_meta.get("encrypted", False)
                 member_name_in_zip = original_arcname
                 if comp_method == "MOTEUR_AE_CIFAR10_COLOR": member_name_in_zip += LATENT_FILE_EXTENSION
                 if is_encrypted: member_name_in_zip += ENCRYPTED_FILE_EXTENSION
-                
+                                
                 data_from_zip = None; 
                 try: data_from_zip = zf.read(member_name_in_zip) 
-                except KeyError: log_callback(f"[CORE_DECOMP] ERREUR: Membre ZIP '{member_name_in_zip}' non trouvé."); continue
+                except KeyError: 
+                    if not (comp_method == "MOTEUR_AE_CIFAR10_COLOR" or is_encrypted) and original_arcname in zf.namelist():
+                        log_callback(f"[CORE_DECOMP] '{member_name_in_zip}' non trouvé, tentative '{original_arcname}'...")
+                        try: data_from_zip = zf.read(original_arcname); member_name_in_zip = original_arcname
+                        except Exception as e_read_fallback: log_callback(f"[CORE_DECOMP] Échec lecture fallback '{original_arcname}': {e_read_fallback}"); continue
+                    else: log_callback(f"[CORE_DECOMP] ERREUR: Membre '{member_name_in_zip}' non trouvé."); continue
                 except RuntimeError as e_rt_m: 
                     if password_decompress and "password" in str(e_rt_m).lower(): return False, f"PasswordErrorFile:{member_name_in_zip}"
                     log_callback(f"[CORE_DECOMP] Erreur Runtime ZIP lecture '{member_name_in_zip}': {e_rt_m}"); continue
@@ -395,32 +449,56 @@ def decompress_aic(aic_file_path, output_extract_path, password_decompress=None,
                         base, _ = os.path.splitext(original_arcname)
                         save_path = os.path.join(output_extract_path, base + "_reconstructed_cifar_ae.png")
                         if postprocess_and_save_cifar10_ae_output(img_recon_norm, save_path, original_dims, log_callback=log_callback):
-                             files_written_by_custom_logic_paths.add(save_path)
+                             files_written_by_custom_logic.add(save_path)
                     except Exception as e_ae_proc: log_callback(f"[CORE_DECOMP] Erreur traitement AE de '{original_arcname}': {e_ae_proc}")
-                elif comp_method == "BZIP2": final_data_to_write = bz2.decompress(data_to_process); log_callback(f" Décompressé BZIP2: {original_arcname}")
-                elif comp_method == "LZMA": final_data_to_write = lzma.decompress(data_to_process, format=lzma.FORMAT_XZ); log_callback(f" Décompressé LZMA: {original_arcname}")
-                elif comp_method in [str(zipfile.ZIP_DEFLATED), str(zipfile.ZIP_STORED)]: final_data_to_write = data_to_process
+                elif comp_method == "BZIP2": 
+                    try: final_data_to_write = bz2.decompress(data_to_process); log_callback(f" Décompressé BZIP2: {original_arcname}")
+                    except Exception as e: log_callback(f" Erreur décomp BZIP2 {original_arcname}: {e}"); continue
+                elif comp_method == "LZMA": 
+                    try: final_data_to_write = lzma.decompress(data_to_process, format=lzma.FORMAT_XZ); log_callback(f" Décompressé LZMA: {original_arcname}")
+                    except Exception as e: log_callback(f" Erreur décomp LZMA {original_arcname}: {e}"); continue
+                elif comp_method == "ZSTD": # NOUVELLE DÉCOMPRESSION ZSTD
+                    if ZSTD_AVAILABLE:
+                        try: dctx = zstd.ZstdDecompressor(); final_data_to_write = dctx.decompress(data_to_process); log_callback(f" Décompressé ZSTD: {original_arcname}")
+                        except Exception as e: log_callback(f" Erreur décomp ZSTD {original_arcname}: {e}"); continue
+                    else: log_callback(f"[CORE_DECOMP] ZSTD non dispo pour décompresser {original_arcname}."); continue
+                elif comp_method in [str(zipfile.ZIP_DEFLATED), str(zipfile.ZIP_STORED)]:
+                    if is_encrypted: final_data_to_write = data_to_process # Données déchiffrées prêtes
+                    # Si non chiffré, sera extrait par la boucle de fallback.
                 else: final_data_to_write = data_to_process 
 
-                if final_data_to_write is not None and not write_handled_by_ae_postprocess:
-                    log_callback(f"[CORE_DECOMP] Écriture fichier final '{output_final_path}' ({len(final_data_to_write)} octets)...")
+                if final_data_to_write is not None:
+                    log_callback(f"[CORE_DECOMP] Écriture fichier final '{output_final_path}'...")
                     os.makedirs(os.path.dirname(output_final_path), exist_ok=True)
                     with open(output_final_path, 'wb') as f_out: f_out.write(final_data_to_write)
-                    files_written_by_custom_logic_paths.add(output_final_path)
-                    log_callback(f"[CORE_DECOMP] Fichier '{output_final_path}' écrit.")
+                    files_written_by_custom_logic.add(output_final_path) # Marquer comme écrit par cette logique
             
-            # Boucle de Fallback pour les membres non explicitement écrits par la logique item_meta
-            log_callback("[CORE_DECOMP] Phase extraction générale des membres ZIP restants (si non déjà écrits)...")
+            # Boucle de Fallback pour les membres qui n'ont pas été écrits par la logique item_meta
+            # (typiquement DEFLATE/STORED non chiffrés, ou fichiers de dossiers)
+            log_callback("[CORE_DECOMP] Phase extraction générale des membres ZIP restants...")
             for member_info in zf.infolist():
                 member_name = member_info.filename
-                target_disk_path = os.path.join(output_extract_path, member_name)
-                if member_name == METADATA_FILENAME or target_disk_path in files_written_by_custom_logic_paths:
+                target_disk_path = os.path.join(output_extract_path, member_name) # Chemin complet sur le disque
+
+                if member_name == METADATA_FILENAME or target_disk_path in files_written_by_custom_logic:
                     log_callback(f"[CORE_DECOMP_FALLBACK] Ignoré (méta ou déjà écrit): {member_name}")
                     continue
-                # Ignorer les fichiers .aic_latent ou .aic_enc bruts s'ils n'ont pas été traités pour une sortie
-                if member_name.endswith(LATENT_FILE_EXTENSION) or member_name.endswith(ENCRYPTED_FILE_EXTENSION):
-                    log_callback(f"[CORE_DECOMP_FALLBACK] Ignoré (donnée spéciale non traitée pour sortie directe): {member_name}")
-                    continue
+                
+                # Ignorer les fichiers de données brutes (latent, ou chiffré qui a servi à créer une sortie)
+                # car leur "vrai" contenu a déjà été traité et écrit sous le nom original.
+                if member_name.endswith(LATENT_FILE_EXTENSION) or \
+                   member_name.endswith(LATENT_FILE_EXTENSION + ENCRYPTED_FILE_EXTENSION) or \
+                   (member_name.endswith(ENCRYPTED_FILE_EXTENSION) and not member_name[:-len(ENCRYPTED_FILE_EXTENSION)].endswith(LATENT_FILE_EXTENSION)): # Fichier normal chiffré
+                    # Vérifier s'il correspond à un item qui a été traité (AE ou déchiffré)
+                    original_name_candidate = member_name.replace(LATENT_FILE_EXTENSION, "").replace(ENCRYPTED_FILE_EXTENSION, "")
+                    is_source_for_custom_written_file = False
+                    for written_path in files_written_by_custom_logic:
+                        if os.path.basename(written_path) == original_name_candidate or \
+                           os.path.splitext(os.path.basename(written_path))[0].startswith(os.path.splitext(original_name_candidate)[0] + "_reconstructed_"):
+                            is_source_for_custom_written_file = True; break
+                    if is_source_for_custom_written_file:
+                         log_callback(f"[CORE_DECOMP_FALLBACK] Ignoré (donnée source pour fichier déjà écrit): {member_name}")
+                         continue
                 
                 log_callback(f"[CORE_DECOMP_FALLBACK] Tentative extraction standard de: {member_name}")
                 try:
@@ -461,7 +539,7 @@ def extract_archive(archive_path, output_dir, password=None, log_callback=_defau
 
     _, extension = os.path.splitext(archive_path); extension = extension.lower()
     analysis_for_extract = "unknown_type"; 
-    if AI_ANALYZER_AVAILABLE_FLAG_FROM_MODULE: analysis_for_extract = analyze_file_content(archive_path, log_callback=log_callback) # Passer log_callback
+    if AI_ANALYZER_AVAILABLE: analysis_for_extract = analyze_file_content(archive_path, log_callback=log_callback) 
 
     if extension == DEFAULT_AIC_EXTENSION or analysis_for_extract == "aic_custom_format": 
         return decompress_aic(archive_path, output_dir, password_decompress=password, log_callback=log_callback)

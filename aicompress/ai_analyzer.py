@@ -9,6 +9,7 @@ import joblib
 import math 
 from collections import Counter 
 import shutil # Pour le nettoyage dans if __name__ == '__main__'
+import zlib # Pour le test de compressibilité rapide
 
 try:
     import magic
@@ -206,21 +207,82 @@ def calculate_shannon_entropy(file_path, sample_size=10240, log_callback=_defaul
         log_callback(f"[AI_ANALYZER] Erreur calcul entropie pour {os.path.basename(file_path)}: {e}")
         return 0.0 
 
+# Dans aicompress/ai_analyzer.py
+
+# ... (gardez les imports : os, json, sklearn, numpy, joblib, math, Counter, magic)
+# ... (gardez les constantes MODEL_BASE_DIR, etc.)
+# ... (gardez _default_log_analyzer, ensure_model_dir_exists, et les fonctions de gestion du modèle de texte)
+# ... (gardez la fonction calculate_shannon_entropy comme avant)
+# def calculate_shannon_entropy(file_path, sample_size=10240, log_callback=_default_log_analyzer):
+#     # ... (code de la fonction calculate_shannon_entropy) ...
+#     # (elle doit être définie AVANT get_file_features si get_file_features l'appelle)
+
+def get_quick_compressibility(file_path, sample_size=16384, compression_level=1, log_callback=_default_log_analyzer):
+    """
+    Calcule un ratio de compressibilité rapide sur un échantillon du fichier.
+    Retourne un ratio (original_size / compressed_size). 
+    Un ratio plus élevé signifie plus compressible. Retourne 1.0 si non compressible ou erreur.
+    """
+    if not os.path.exists(file_path): return 1.0
+    file_s = os.path.getsize(file_path)
+    # Retourner 1.0 pour les fichiers très petits ou vides car le ratio n'est pas significatif
+    # ou peut causer des erreurs avec zlib.compress sur des données vides/trop petites.
+    if file_s < 20: # Un seuil un peu plus élevé pour être sûr avec zlib
+        # log_callback(f"[AI_ANALYZER] Fichier {os.path.basename(file_path)} trop petit pour test de compressibilité.")
+        return 1.0 
+
+    actual_sample_size = min(file_s, sample_size)
+    try:
+        with open(file_path, 'rb') as f:
+            data_sample = f.read(actual_sample_size)
+        
+        if not data_sample: return 1.0
+
+        # Utiliser zlib pour le test de compressibilité rapide
+        import zlib 
+        compressed_sample = zlib.compress(data_sample, level=compression_level)
+        
+        original_sample_size = len(data_sample)
+        compressed_sample_size = len(compressed_sample)
+
+        if compressed_sample_size == 0: # Peut arriver si data_sample est vide, bien que vérifié avant
+             return 1.0
+        if compressed_sample_size >= original_sample_size: # Pas de gain ou augmentation
+            return 1.0 
+        
+        ratio = original_sample_size / compressed_sample_size
+        return round(ratio, 4)
+    except Exception as e:
+        log_callback(f"[AI_ANALYZER] Erreur calcul compressibilité rapide pour {os.path.basename(file_path)}: {e}")
+        return 1.0
+
 def get_file_features(file_path, log_callback=_default_log_analyzer):
+    """Extrait un dictionnaire de caractéristiques pour un fichier."""
     if not os.path.exists(file_path):
-        return {"type": "file_not_found", "size_bytes": 0, "entropy_normalized": 0.0, "error": True}
+        return {"type": "file_not_found", "size_bytes": 0, "entropy_normalized": 0.0, "quick_comp_ratio": 1.0, "error": True}
     
-    file_type = analyze_file_content(file_path, log_callback=log_callback)
+    # Utiliser la fonction analyze_file_content existante pour le type
+    file_type = analyze_file_content(file_path, log_callback=log_callback) 
     file_size = os.path.getsize(file_path)
+    
+    # Calculer l'entropie (s'assurer que calculate_shannon_entropy est définie avant cette fonction)
     file_entropy = calculate_shannon_entropy(file_path, log_callback=log_callback)
+    
+    # Calculer la compressibilité rapide
+    quick_comp_ratio = get_quick_compressibility(file_path, log_callback=log_callback)
     
     features = {
         "type": file_type,
         "size_bytes": file_size,
-        "entropy_normalized": round(file_entropy, 4)
+        "entropy_normalized": round(file_entropy, 4),
+        "quick_comp_ratio": quick_comp_ratio # C'était la ligne qui posait problème ou celle d'avant
     }
     log_callback(f"[AI_ANALYZER] Features pour {os.path.basename(file_path)}: {features}")
     return features
+
+# Assurez-vous que la fonction calculate_shannon_entropy est bien définie avant get_file_features si vous l'avez copiée ici.
+# Sinon, elle devrait déjà être dans votre ai_analyzer.py de la version précédente.
+# AI_ANALYZER_AVAILABLE = True doit être à la fin du module.
 
 # Indiquer que l'analyseur est disponible si ce module est importé avec succès
 # et si ses dépendances clés (comme sklearn/joblib pour le modèle de texte) sont là.
