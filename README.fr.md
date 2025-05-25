@@ -49,8 +49,8 @@ Ce projet est en développement actif et est principalement un terrain d'expéri
 
 2.  **Cloner le Dépôt (si le dépôt est public) :**
     ```bash
-    git clone [https://github.com/hbo84/AICompressProject.git](https://github.com/hbo84/AICompressProject.git)
-    cd AICompressProject
+    git clone https://github.com/hbo84/AICompress.git
+    cd AICompress
     ```
 
 3.  **Créer un Environnement Virtuel (Fortement Recommandé) :**

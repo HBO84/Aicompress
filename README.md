@@ -50,8 +50,8 @@ This project is under active development and is primarily a field for experiment
 
 2.  **Clone the Repository (if public):**
     ```bash
-    git clone [https://github.com/hbo84/AICompressProject.git](https://github.com/hbo84/AICompressProject.git)
-    cd AICompressProject
+    git clone https://github.com/hbo84/AICompress.git
+    cd AICompress
     ```
 
 3.  **Create a Virtual Environment (Highly Recommended):**
