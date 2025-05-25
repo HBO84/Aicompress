@@ -1,0 +1,23 @@
+# Core ML and Data Handling
+tensorflow # Ou tensorflow-cpu si vous ne ciblez pas l'utilisation du GPU pour l'AE
+scikit-learn
+pandas
+joblib
+
+# Image Processing
+Pillow
+
+# File Type Detection
+python-magic # Nécessite libmagic sur certains systèmes (voir README)
+
+# Archive Format Support
+rarfile
+py7zr
+zstandard
+brotli
+
+# Cryptography
+cryptography
+
+# Pour les mises à jour OTA (si ota_updater.py utilise 'requests')
+requests

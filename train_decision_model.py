@@ -12,7 +12,7 @@ import os
 import numpy as np
 
 # --- Configuration ---
-DATASET_CSV_PATH = "compression_decision_dataset.csv"
+DATASET_CSV_PATH = "compression_decision_dataset_v2_brotli.csv"
 # Sauvegarder les modèles dans le dossier 'aicompress' pour qu'ils soient packagés avec
 MODEL_DIR = os.path.join("aicompress") 
 MODEL_SAVE_PATH = os.path.join(MODEL_DIR, "compression_orchestrator_model.joblib")

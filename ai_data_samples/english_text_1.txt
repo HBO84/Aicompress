@@ -1,3 +1,0 @@
-This is a sample of plain English text. 
-It contains common words and typical sentence structures.
-The purpose is to see if we can distinguish it from code.
