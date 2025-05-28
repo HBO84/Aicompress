@@ -40,7 +40,7 @@ This project is under active development and is primarily a field for experiment
 ## Installation
 
 1.  **Prerequisites:**
-    * Python 3.10 or higher recommended.
+    * Python 3.12 recommended.
     * `pip` (Python package manager).
     * For `.rar` decompression, the `unrar` command-line tool must be installed on your system and accessible in your system's PATH.
     * On some Linux systems, for file type detection with `python-magic`, installing `libmagic1` (or a similar package) may be necessary:

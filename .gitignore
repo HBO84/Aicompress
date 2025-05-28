@@ -15,6 +15,10 @@ __pycache__/
 *.swp
 *~
 
+# Fichiers D'entrainement**********************
+create_decision_dataset.py
+train_decision_model.py
+cifar10_ae_color_v5_train.py
 # Fichiers de modèles volumineux ou données temporaires
 # (À vous de décider si vous voulez versionner vos .keras et .joblib entraînés)
 # Si vos modèles sont petits et essentiels au fonctionnement de la version alpha,
@@ -31,6 +35,7 @@ __pycache__/
 # (Mais pour l'instant, gardons-les pour que le projet soit fonctionnel depuis un clone)
 
 # Fichiers de dataset générés (peuvent être volumineux)
+dataset_source_files/
 *.csv 
 # (Sauf si vous voulez versionner un petit CSV d'exemple)
 # Si votre compression_decision_dataset.csv est petit, vous pouvez le garder.

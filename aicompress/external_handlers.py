@@ -1,6 +1,7 @@
 # aicompress/external_handlers.py
 
 import os
+import sys
 import zipfile 
 
 # --- Variable globale du module pour le logger ---
@@ -16,6 +17,7 @@ _ext_DEFAULT_AIC_EXTENSION = ".aic"
 _ext_decompress_aic_func = lambda arc, od, pwd, lc: (False, "AICDecompressorNotSetInExtHandler_fb")
 PY7ZR_AVAILABLE_EXT = False # Flag pour py7zr, défini par son propre import
 
+
 try:
     import py7zr
     PY7ZR_AVAILABLE_EXT = True
@@ -26,41 +28,36 @@ except ImportError:
 
 
 def _initialize_dependencies(dependencies: dict):
-    """
-    Initialise les dépendances nécessaires depuis le module aic_file_handler.
-    Appelé par aic_file_handler.py à la fin de son chargement.
-    """
     global _ext_RARFILE_AVAILABLE, _ext_rarfile_module, _ext_AI_ANALYZER_AVAILABLE
-    global _ext_analyze_file_content_func, _ext_DEFAULT_AIC_EXTENSION, _ext_decompress_aic_func
-    global _ext_log # Important de déclarer qu'on modifie la globale _ext_log
+    # ... (autres globales)
+    global _ext_log
 
-    # Mettre à jour le logger en premier
     passed_log_callback = dependencies.get("log_callback")
-    if callable(passed_log_callback):
-        _ext_log = passed_log_callback
-    
-    _ext_log("[EXTERNAL_HANDLERS] Initialisation des dépendances...")
-    
-    _ext_RARFILE_AVAILABLE = dependencies.get("RARFILE_AVAILABLE_flag", False)
-    _ext_rarfile_module = dependencies.get("rarfile_module", None) # Le module rarfile lui-même
-    _ext_AI_ANALYZER_AVAILABLE = dependencies.get("AI_ANALYZER_AVAILABLE_flag", False)
-    _ext_analyze_file_content_func = dependencies.get("analyze_file_content_func", _ext_analyze_file_content_func)
-    _ext_DEFAULT_AIC_EXTENSION = dependencies.get("DEFAULT_AIC_EXTENSION_const", ".aic")
-    _ext_decompress_aic_func = dependencies.get("decompress_aic_func", _ext_decompress_aic_func)
-    
-    if not callable(_ext_decompress_aic_func) or _ext_decompress_aic_func.__name__.startswith('_fallback'):
-        _ext_log("[EXTERNAL_HANDLERS] ERREUR critique: decompress_aic_func n'a pas été correctement initialisée depuis aic_file_handler !")
-    if not callable(_ext_analyze_file_content_func) or _ext_analyze_file_content_func.__name__.startswith('_fallback'):
-        _ext_log("[EXTERNAL_HANDLERS] AVERT: analyze_file_content_func n'a pas été correctement initialisée.")
-        
-    if _ext_RARFILE_AVAILABLE and _ext_rarfile_module is None:
-        _ext_log("[EXTERNAL_HANDLERS] AVERT: RARFILE_AVAILABLE est True mais le module rarfile n'a pas été passé.")
-    
-    if not PY7ZR_AVAILABLE_EXT:
-        _ext_log("[EXTERNAL_HANDLERS] INFO: Bibliothèque py7zr non trouvée. Décompression .7z sera désactivée.")
-    else:
-        _ext_log("[EXTERNAL_HANDLERS] INFO: Bibliothèque py7zr est disponible.")
+    if callable(passed_log_callback): _ext_log = passed_log_callback
 
+    _ext_log("[EXTERNAL_HANDLERS] Initialisation des dépendances...")
+
+    _ext_RARFILE_AVAILABLE = dependencies.get("RARFILE_AVAILABLE_flag", False)
+    _ext_rarfile_module = dependencies.get("rarfile_module", None) # Récupérer le module rarfile
+    # ... (récupérer les autres dépendances) ...
+
+    # --- CONFIGURER UNRAR_TOOL ICI ---
+    if _ext_RARFILE_AVAILABLE and _ext_rarfile_module and getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        application_path = sys._MEIPASS
+        unrar_exe_path_in_bundle = os.path.join(application_path, "unrar.exe")
+        if hasattr(_ext_rarfile_module, 'UNRAR_TOOL'):
+            if os.path.exists(unrar_exe_path_in_bundle):
+                _ext_rarfile_module.UNRAR_TOOL = unrar_exe_path_in_bundle
+                _ext_log(f"[EXTERNAL_HANDLERS] Chemin UNRAR_TOOL configuré sur (via _ext_rarfile_module): {unrar_exe_path_in_bundle}")
+            else:
+                _ext_log(f"[EXTERNAL_HANDLERS] AVERT: unrar.exe non trouvé dans le bundle à {unrar_exe_path_in_bundle} pour _ext_rarfile_module.")
+        else:
+            _ext_log(f"[EXTERNAL_HANDLERS] AVERT: _ext_rarfile_module n'a pas d'attribut UNRAR_TOOL.")
+    elif _ext_RARFILE_AVAILABLE and _ext_rarfile_module:
+         _ext_log(f"[EXTERNAL_HANDLERS] Non empaqueté ou _MEIPASS non trouvé, UNRAR_TOOL non configuré explicitement ici.")
+    # --- FIN CONFIGURATION UNRAR_TOOL ---
+
+    # ... (vérification py7zr et log final d'initialisation)
     _ext_log("[EXTERNAL_HANDLERS] Dépendances initialisées et vérifiées.")
 
 
