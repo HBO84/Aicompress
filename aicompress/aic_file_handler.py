@@ -1,11 +1,13 @@
 # aicompress/aic_file_handler.py (Version du 21 Mai - Correction TypeError progress_callback)
 
+from . import external_handlers # Importer notre nouveau toolkit
 import os
 import zipfile 
 import shutil
 import json
 import numpy as np
-
+import tempfile # Pour créer des dossiers temporaires
+import shutil   # Pour supprimer les dossiers temporaires
 # --- Fonction de Log par Défaut ---
 def _default_log(message):
     print(message)
@@ -111,6 +113,27 @@ def _count_total_individual_files(input_paths, log_callback=_default_log):
 
 # ... (gardez tous les imports et les autres fonctions comme _default_log, les fallbacks, 
 #      get_compression_settings, compress_to_aic, decompress_aic, etc.)
+def _is_archive_file(file_path, log_callback=_default_log):
+    """Vérifie si un fichier est un type d'archive que nous pouvons décompresser récursivement."""
+    # Liste des types d'archives que external_handlers.extract_archive peut gérer
+    SUPPORTED_RECURSIVE_TYPES = [
+        'zip_archive',
+        'rar_archive',
+        '7z_archive',
+        'aic_custom_format' # Notre propre format
+        # On pourrait ajouter 'gzip_archive', 'tar_archive' ici si on ajoutait leur support
+    ]
+    # Liste des extensions pour le fallback si l'analyseur d'IA n'est pas disponible
+    SUPPORTED_RECURSIVE_EXTENSIONS = ['.zip', '.rar', '.7z', DEFAULT_AIC_EXTENSION.lower()]
+
+    if not AI_ANALYZER_AVAILABLE:
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in SUPPORTED_RECURSIVE_EXTENSIONS
+    
+    analysis_type = analyze_file_content(file_path, log_callback=log_callback)
+    return analysis_type in SUPPORTED_RECURSIVE_TYPES
+
+
 
 def _process_and_add_file_to_aic(zf, file_path_on_disk, arcname_to_use, password_compress, 
                                  log_callback, progress_state, cancel_event=None): # AJOUT cancel_event
@@ -228,76 +251,152 @@ def _process_and_add_file_to_aic(zf, file_path_on_disk, arcname_to_use, password
     return item_meta
 
 
+# Dans aicompress/aic_file_handler.py
+# Assurez-vous que _count_total_individual_files et _is_archive_file sont définies avant cette fonction,
+# et que _process_and_add_file_to_aic est définie et accepte bien les 7 arguments
+# (zf, file_path_on_disk, arcname_to_use, password_compress, log_callback, progress_state, cancel_event)
+
 def compress_to_aic(input_paths, output_aic_path, password_compress=None, 
-                    log_callback=_default_log, progress_callback=None, cancel_event=None): # AJOUT cancel_event
+                    log_callback=_default_log, progress_callback=None, 
+                    cancel_event=None, recursively_optimize=False):
     log_callback(f"[AIC_HANDLER] Compression AIC vers '{output_aic_path}' (Chiffré: {'Oui' if password_compress else 'Non'})...")
+    if recursively_optimize:
+        log_callback("[AIC_HANDLER] Mode d'optimisation récursive des archives ACTIVÉ.")
+        
     all_items_metadata = []
     
+    # total_individual_files est défini ici et devrait être accessible dans le except
     total_individual_files = _count_total_individual_files(input_paths, log_callback)
-    current_processed_individual_files = 0 
-    progress_state_list = [current_processed_individual_files, total_individual_files, progress_callback]
+    progress_state_list = [0, total_individual_files, progress_callback] 
 
     if callable(progress_callback) and total_individual_files > 0:
         progress_callback(0, total_individual_files)
 
+    operation_cancelled_flag = False # Doit être accessible par process_item_recursively
+
+    # --- Définition de la fonction interne ---
+    def process_item_recursively(item_path, base_arc_path=""):
+        nonlocal operation_cancelled_flag # Pour modifier le flag de la portée externe
+        
+        if cancel_event and cancel_event.is_set():
+            operation_cancelled_flag = True
+            return
+
+        item_basename = os.path.basename(item_path)
+        # S'assurer que current_arc_path est bien construit
+        current_arc_path = os.path.join(base_arc_path, item_basename) if base_arc_path else item_basename
+
+        if not os.path.exists(item_path):
+            log_callback(f"[AIC_HANDLER] Item non trouvé (ignoré) : {item_path}")
+            all_items_metadata.append({"original_name": current_arc_path, "status": "not_found"})
+            return
+
+        if recursively_optimize and os.path.isfile(item_path) and _is_archive_file(item_path, log_callback):
+            log_callback(f"--- Début de l'optimisation de l'archive interne : {current_arc_path} ---")
+            
+            # L'import local de external_handlers n'est PAS nécessaire pour extract_archive
+            # from . import external_handlers # SUPPRIMER CET IMPORT LOCAL
+            
+            temp_dir = tempfile.mkdtemp(prefix="aicompress_rec_")
+            log_callback(f"[AIC_HANDLER] Extraction de '{item_basename}' dans : {temp_dir}")
+            
+            try:
+                # --- CORRECTION ICI : Appeler extract_archive directement ---
+                # extract_archive est maintenant une fonction de ce même module (aic_file_handler.py)
+                # ou importée dans __init__.py et accessible globalement si on importe depuis là.
+                # Pour un appel interne, on peut l'appeler directement si elle est définie dans ce fichier.
+                # Assumons qu'elle est définie dans ce fichier ou accessible.
+                success_extract, status_extract = extract_archive( # Appel direct
+                    item_path, temp_dir, password=None, 
+                    log_callback=log_callback, 
+                    progress_callback=None, 
+                    cancel_event=cancel_event
+                )
+                # --- FIN CORRECTION ---
+                
+                if cancel_event and cancel_event.is_set(): operation_cancelled_flag = True
+                
+                if success_extract and not operation_cancelled_flag:
+                    all_items_metadata.append({
+                        "original_name": current_arc_path, 
+                        "type_in_archive": "directory", 
+                        "status": "recursively_processed"
+                    })
+                    for root, _, files_in_dir in os.walk(temp_dir):
+                        if operation_cancelled_flag: break
+                        for file_in_d in files_in_dir:
+                            if cancel_event and cancel_event.is_set(): operation_cancelled_flag = True; break
+                            
+                            full_file_path_in_temp = os.path.join(root, file_in_d)
+                            arc_path_for_subfile = os.path.join(current_arc_path, 
+                                                                os.path.relpath(full_file_path_in_temp, temp_dir))
+                            
+                            meta = _process_and_add_file_to_aic(zf, full_file_path_in_temp, arc_path_for_subfile, 
+                                                                password_compress, log_callback, 
+                                                                progress_state_list, 
+                                                                cancel_event)
+                            all_items_metadata.append(meta)
+                            if meta.get("status", "").startswith("cancelled"): operation_cancelled_flag = True; break
+                        if operation_cancelled_flag: break
+                    log_callback(f"--- Fin de l'optimisation de l'archive interne : {current_arc_path} ---")
+                elif not operation_cancelled_flag: 
+                    log_callback(f"[AIC_HANDLER] AVERT: Échec extraction archive interne '{current_arc_path}'. Traitée comme fichier normal. Status: {status_extract}")
+                    all_items_metadata.append(_process_and_add_file_to_aic(zf, item_path, current_arc_path, password_compress, log_callback, progress_state_list, cancel_event))
+                
+                if operation_cancelled_flag:
+                    log_callback(f"[AIC_HANDLER] Optimisation de '{current_arc_path}' annulée.")
+                    return 
+
+            finally:
+                log_callback(f"[AIC_HANDLER] Nettoyage du dossier temporaire : {temp_dir}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        elif os.path.isfile(item_path): 
+            all_items_metadata.append(
+                _process_and_add_file_to_aic(zf, item_path, current_arc_path, 
+                                             password_compress, log_callback, 
+                                             progress_state_list, cancel_event)
+            )
+        elif os.path.isdir(item_path):
+            log_callback(f"[AIC_HANDLER] Traitement du dossier : {current_arc_path}")
+            all_items_metadata.append({"original_name": current_arc_path, "type_in_archive": "directory", "status": "processed", "size_original_bytes": 0}) 
+            for sub_item_name in sorted(os.listdir(item_path)): 
+                if operation_cancelled_flag: break
+                process_item_recursively(os.path.join(item_path, sub_item_name), current_arc_path) 
+            if operation_cancelled_flag:
+                log_callback(f"[AIC_HANDLER] Traitement du dossier '{current_arc_path}' annulé.")
+                return
+        
+        if all_items_metadata and all_items_metadata[-1].get("status", "").startswith("cancelled"):
+            operation_cancelled_flag = True
+    # --- Fin de la fonction interne process_item_recursively ---
+
     try:
         with zipfile.ZipFile(output_aic_path, 'w') as zf: 
-            for item_path_on_disk in input_paths:
-                if cancel_event and cancel_event.is_set():
-                    log_callback("[AIC_HANDLER] Annulation détectée dans la boucle principale de compress_to_aic.")
-                    break # Sortir de la boucle des items de premier niveau
-
-                item_basename_for_archive = os.path.basename(item_path_on_disk)
-                if not os.path.exists(item_path_on_disk): 
-                    all_items_metadata.append({"original_name": item_basename_for_archive, "status": "not_found"}); continue
-                
-                if os.path.isfile(item_path_on_disk):
-                    meta = _process_and_add_file_to_aic(zf, item_path_on_disk, item_basename_for_archive, 
-                                                        password_compress, log_callback, progress_state_list, cancel_event) # Passer cancel_event
-                    all_items_metadata.append(meta)
-                    if meta.get("status", "").startswith("cancelled"): break # Arrêter si un fichier a été annulé
-                
-                elif os.path.isdir(item_path_on_disk):
-                    all_items_metadata.append({"original_name": item_basename_for_archive, "type_in_archive": "directory", "status": "processed", "size_original_bytes": 0}) 
-                    # Itérer sur les fichiers du dossier
-                    # Pour une annulation rapide, il faudrait vérifier cancel_event dans cette boucle aussi
-                    # ou que _process_and_add_file_to_aic propage l'annulation.
-                    dir_cancelled = False
-                    for root, _, files_in_dir in os.walk(item_path_on_disk):
-                        if cancel_event and cancel_event.is_set(): dir_cancelled = True; break
-                        for file_in_d in files_in_dir:
-                            if cancel_event and cancel_event.is_set(): dir_cancelled = True; break
-                            full_path=os.path.join(root,file_in_d); arc_path=os.path.join(item_basename_for_archive,os.path.relpath(full_path,item_path_on_disk))
-                            meta = _process_and_add_file_to_aic(zf, full_path, arc_path, password_compress, log_callback, progress_state_list, cancel_event) # Passer cancel_event
-                            all_items_metadata.append(meta)
-                            if meta.get("status", "").startswith("cancelled"): dir_cancelled = True; break
-                        if dir_cancelled: break
-                    if dir_cancelled: 
-                        log_callback(f"[AIC_HANDLER] Annulation pendant le traitement du dossier {item_basename_for_archive}.")
-                        break # Sortir de la boucle principale des items
+            for top_level_path in input_paths: # Item de premier niveau
+                if operation_cancelled_flag: break # Vérifier avant de traiter le prochain item de haut niveau
+                process_item_recursively(top_level_path)
             
-            # Vérifier si annulé avant d'écrire les métadonnées
-            if cancel_event and cancel_event.is_set():
-                log_callback("[AIC_HANDLER] Opération annulée. Les métadonnées pourraient être incomplètes ou non écrites.")
-                # On pourrait supprimer le fichier .aic partiel ici si on veut une annulation "propre"
-                # zf.close()
-                # os.remove(output_aic_path)
-                # log_callback(f"[AIC_HANDLER] Archive partielle '{output_aic_path}' supprimée suite à annulation.")
-                return False, "Cancelled" # Statut spécifique pour annulation
-
-            metadata_final_content = {"aicompress_version":"1.2-cancel","items_details":all_items_metadata, "global_encryption_hint":bool(password_compress and CRYPTOGRAPHY_AVAILABLE)}
+            if operation_cancelled_flag:
+                log_callback("[AIC_HANDLER] Opération de compression annulée. L'archive .aic peut être incomplète ou invalide.")
+                return False, "Cancelled" 
+            
+            metadata_final_content = {"aicompress_version":"1.3-recursive","items_details":all_items_metadata, "global_encryption_hint":bool(password_compress and CRYPTOGRAPHY_AVAILABLE)}
             zf.writestr(METADATA_FILENAME,json.dumps(metadata_final_content,indent=4))
-            log_callback(f"[AIC_HANDLER] Métadonnées écrites. Compression AIC terminée: '{output_aic_path}'")
-            # S'assurer que la barre est à 100% si la progression est finie et non annulée
+            
             if callable(progress_callback) and total_individual_files > 0:
-                 current_processed_val = progress_state_list[0] # Le nombre réel de fichiers traités
-                 progress_callback(current_processed_val, total_individual_files)
-
+                 progress_callback(progress_state_list[0], total_individual_files) 
+            
+            log_callback(f"[AIC_HANDLER] Métadonnées écrites. Compression AIC terminée: '{output_aic_path}'")
             return True,"Success"
     except Exception as e: 
         log_callback(f"[AIC_HANDLER] ERREUR MAJEURE compression: {e}"); import traceback
         log_callback(f"[AIC_HANDLER] Traceback: {traceback.format_exc()}"); 
-        if callable(progress_callback): progress_callback(0, total_individual_files if total_individual_files > 0 else 1) 
+        if callable(progress_callback): 
+            # Assurer que total_individual_files est défini ici
+            # Si l'erreur se produit avant sa définition complète, cela pourrait encore être un problème.
+            # total_individual_files est défini en dehors du try, donc elle devrait être accessible.
+            progress_callback(0, total_individual_files if total_individual_files > 0 else 1) 
         return False,f"Error: {e}"
 
 # --- Fonction de Décompression Principale pour .aic (MODIFIÉE pour progress_callback) ---
@@ -492,17 +591,55 @@ def decompress_aic(aic_file_path, output_extract_path, password_decompress=None,
         if callable(progress_callback): progress_callback(0,1 if total_items_from_meta == 0 else total_items_from_meta)
         return False, f"UnknownError: {e}"
 
-# --- Initialisation de external_handlers (doit être à la fin) ---
-try:
-    from . import external_handlers
-    dependencies_for_ext = {
-        "log_callback": _default_log, "decompress_aic_func": decompress_aic, 
-        "analyze_file_content_func": analyze_file_content, "AI_ANALYZER_AVAILABLE_flag": AI_ANALYZER_AVAILABLE,
-        "RARFILE_AVAILABLE_flag": RARFILE_AVAILABLE, "rarfile_module": IMPORTED_RARFILE_MODULE, # Utiliser la variable globale corrigée
-        "DEFAULT_AIC_EXTENSION_const": DEFAULT_AIC_EXTENSION
-    }
-    external_handlers._initialize_dependencies(dependencies_for_ext)
-    _default_log("[AIC_HANDLER] Dépendances pour external_handlers initialisées.")
-except ImportError as e_init_ext_handlers: _default_log(f"[AIC_HANDLER] AVERT: external_handlers.py non trouvé pour init: {e_init_ext_handlers}")
-except AttributeError as e_attr_ext_handlers: _default_log(f"[AIC_HANDLER] AVERT: _initialize_dependencies non trouvé dans external_handlers: {e_attr_ext_handlers}")
-except Exception as e_init_ext_other: _default_log(f"[AIC_HANDLER] AVERT: Erreur init external_handlers: {e_init_ext_other}")
+# Dans aicompress/aic_file_handler.py (à ajouter, par exemple après la fonction decompress_aic)
+
+def extract_archive(archive_path, output_dir, password=None, 
+                    log_callback=_default_log, progress_callback=None, cancel_event=None):
+    log_callback(f"[AIC_HANDLER] Point d'entrée extraction pour '{os.path.basename(archive_path)}'...")
+
+    if cancel_event and cancel_event.is_set(): return False, "CancelledBeforeStart"
+    if not os.path.exists(archive_path):
+        log_callback(f"[AIC_HANDLER] ERREUR: Archive '{archive_path}' non trouvée."); return False, "FileNotFound"
+    try: os.makedirs(output_dir, exist_ok=True)
+    except Exception as e: log_callback(f"[AIC_HANDLER] ERREUR création dossier sortie '{output_dir}': {e}"); return False, "OutputDirError"
+
+    _, extension = os.path.splitext(archive_path); extension = extension.lower()
+    analysis_for_extract = "unknown_type"
+    if AI_ANALYZER_AVAILABLE:
+        analysis_for_extract = analyze_file_content(archive_path, log_callback=log_callback) 
+
+    if extension == DEFAULT_AIC_EXTENSION or analysis_for_extract == "aic_custom_format": 
+        return decompress_aic(archive_path, output_dir, password, log_callback, progress_callback, cancel_event)
+
+    elif extension == ".zip" or analysis_for_extract == "zip_archive":
+        log_callback(f"[AIC_HANDLER] Format .zip détecté. Utilisation de la logique zipfile interne.")
+        success, status = False, "InitErrorZIP"; num_files = 0; processed_files = 0; cancelled = False
+        try:
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                members = zf.infolist(); num_files = len(members)
+                if callable(progress_callback) and num_files > 0: progress_callback(0, num_files)
+                for member in members:
+                    if cancel_event and cancel_event.is_set(): cancelled=True; status="Cancelled"; break
+                    log_callback(f"[AIC_HANDLER] Extraction ZIP: {member.filename}")
+                    zf.extract(member, path=output_dir, pwd=password.encode('utf-8') if password else None)
+                    processed_files += 1
+                    if callable(progress_callback): progress_callback(processed_files, num_files)
+                if not cancelled and processed_files == num_files: success, status = True, "Success"
+        except Exception as e_zip: status = f"Error: {e_zip}"; success = False
+        return success, status
+
+    elif extension == ".rar" or analysis_for_extract == "rar_archive":
+        log_callback(f"[AIC_HANDLER] Format .rar détecté. Appel de external_handlers.decompress_rar.")
+        return external_handlers.decompress_rar(archive_path, output_dir, password, log_callback, progress_callback, cancel_event)
+
+    elif extension == ".7z" or analysis_for_extract == "7z_archive":
+        log_callback(f"[AIC_HANDLER] Format .7z détecté. Appel de external_handlers.decompress_7z.")
+        return external_handlers.decompress_7z(archive_path, output_dir, password, log_callback, progress_callback, cancel_event)
+
+    else: # Fallback pour .zip sans extension
+        if zipfile.is_zipfile(archive_path):
+            log_callback(f"[AIC_HANDLER] Type non reconnu mais semble ZIP, tentative d'extraction...")
+            # La logique d'extraction ZIP ci-dessus pourrait être factorisée dans une fonction helper
+            return extract_archive(archive_path.replace(extension, ".zip"), output_dir, password, log_callback, progress_callback, cancel_event)
+        log_callback(f"[AIC_HANDLER] Format archive non supporté: '{os.path.basename(archive_path)}'."); 
+        return False, "UnsupportedFormat"

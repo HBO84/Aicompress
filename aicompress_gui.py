@@ -6,31 +6,38 @@ import os
 import threading 
 from datetime import datetime
 
-# --- Imports depuis le package aicompress (via __init__.py) ---
+# --- IMPORTS SIMPLIFIÉS depuis le package aicompress (via __init__.py) ---
 try:
-    from aicompress import (
+    from aicompress import ( # Importe directement depuis le package
         compress_to_aic,
-        extract_archive,
+        extract_archive,      # Devrait maintenant venir de aicompress (via aic_file_handler)
+        # Flags de disponibilité
         AI_ANALYZER_AVAILABLE,
         RARFILE_AVAILABLE,
         CRYPTOGRAPHY_AVAILABLE,
         PY7ZR_SUPPORT_AVAILABLE, 
         OTA_AVAILABLE,
+        # Fonctions OTA
         check_for_model_updates,
         download_and_install_model,
+        # Constantes
         DEFAULT_AIC_EXTENSION
     )
     MODULES_LOADED_SUCCESSFULLY = True 
+    # _gui_initial_fallback_log("INFO (GUI): Composants principaux d'AICompress importés avec succès.")
 except ImportError as e_gui_pkg_import:
     MODULES_LOADED_SUCCESSFULLY = False
-    print(f"ERREUR CRITIQUE (GUI): Impossible d'importer les composants principaux d'AICompress: {e_gui_pkg_import}")
+    print(f"ERREUR CRITIQUE (GUI): Impossible d'importer les composants principaux d'AICompress depuis __init__.py: {e_gui_pkg_import}")
     AI_ANALYZER_AVAILABLE, RARFILE_AVAILABLE, CRYPTOGRAPHY_AVAILABLE, PY7ZR_SUPPORT_AVAILABLE, OTA_AVAILABLE = False, False, False, False, False
     DEFAULT_AIC_EXTENSION = ".aic"
     def _gui_fallback_log(msg="Erreur"): print(f"[GUI_FALLBACK_LOG] {msg}")
-    def compress_to_aic(i,o,p,l=_gui_fallback_log,pc=None,ce=None): l("Erreur: Moteur de compression AIC non chargé !"); return False, "AIC Components Missing" # Ajout cancel_event
-    def extract_archive(a,o,p,l=_gui_fallback_log,pc=None,ce=None): l("Erreur: Moteur d'extraction non chargé !"); return False, "Extraction Components Missing" # Ajout cancel_event
+    def compress_to_aic(i,o,p,l=_gui_fallback_log,pc=None,ce=None): l("Erreur: Moteur de compression AIC non chargé !"); return False, "AIC Components Missing"
+    def extract_archive(a,o,p,l=_gui_fallback_log,pc=None,ce=None): l("Erreur: Moteur d'extraction non chargé !"); return False, "Extraction Components Missing"
     def check_for_model_updates(l=_gui_fallback_log): l("Erreur: Module OTA non chargé !"); return {}
     def download_and_install_model(n,i,l=_gui_fallback_log): l("Erreur: Module OTA non chargé !"); return False
+# --- FIN IMPORTS SIMPLIFIÉS ---
+
+# ... (le reste de votre classe AICompressGUI)
 
 class AICompressGUI:
     # Dans aicompress_gui.py (Classe AICompressGUI)
@@ -41,7 +48,7 @@ class AICompressGUI:
 
     def __init__(self, root_window):
         self.root = root_window
-        self.root.title(f"AICompress (v1.2.3 Resizable Attempt) - {DEFAULT_AIC_EXTENSION}")
+        self.root.title(f"AICompress v1.2.3 - {DEFAULT_AIC_EXTENSION}")
         
         # Rendre la fenêtre explicitement redimensionnable (valeur par défaut, mais pour être sûr)
         self.root.resizable(True, True) 
@@ -52,7 +59,7 @@ class AICompressGUI:
 
         self.files_to_compress = [] 
         self.cancel_event = threading.Event() # Événement pour l'annulation
-
+        self.var_recursive_optimize = tk.BooleanVar() # NOUVELLE LIGNE
         # Frame principal qui s'étend pour remplir la fenêtre
         main_frame = tk.Frame(self.root, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -90,8 +97,20 @@ class AICompressGUI:
         btn_browse_output_aic = tk.Button(output_frame, text="Parcourir...", command=self.browse_output_aic)
         btn_browse_output_aic.pack(side=tk.LEFT, padx=5)
         
+        
+
         compress_options_frame = tk.Frame(compress_frame)
+        
         compress_options_frame.pack(fill=tk.X, pady=(5,0)) # Ne s'étend pas verticalement
+        recursive_optimize_frame = tk.Frame(compress_frame) # debut bouton recursive
+        recursive_optimize_frame.pack(fill=tk.X, pady=5, anchor='w') # anchor='w' pour aligner à gauche
+
+        self.chk_recursive_optimize = tk.Checkbutton(
+            recursive_optimize_frame, 
+            text="Optimiser les archives incluses (plus lent)",
+            variable=self.var_recursive_optimize
+        )
+        self.chk_recursive_optimize.pack(side=tk.LEFT) # Fin bouton recursive
         self.var_encrypt_aic = tk.BooleanVar()
         self.chk_encrypt_aic = tk.Checkbutton(compress_options_frame, text="Protéger par mot de passe:", 
                                               variable=self.var_encrypt_aic, command=self.toggle_password_entry_compress,
@@ -111,7 +130,7 @@ class AICompressGUI:
         self.btn_cancel_compress = tk.Button(compress_action_buttons_frame, text="Annuler", command=self.cancel_operation, 
                                              state=tk.DISABLED, width=10)
         self.btn_cancel_compress.pack(side=tk.LEFT, padx=10)
-
+        
         # --- Section Décompression ---
         # Ce cadre ne doit pas s'étendre verticalement, juste horizontalement
         decompress_frame = tk.LabelFrame(main_frame, text="Décompresser Archive", padx=10, pady=10)
@@ -342,14 +361,25 @@ class AICompressGUI:
         if self.root.winfo_exists(): self.root.after(0, self.update_progress_bar, current_item_count, total_items)
 
     def start_compression_thread(self):
-        if not MODULES_LOADED_SUCCESSFULLY: messagebox.showerror("Erreur", "Modules AICompress non chargés !"); return
-        if not self.files_to_compress: messagebox.showerror("Erreur", "Aucun fichier/dossier à compresser."); return
-        output_path = self.entry_output_aic_path.get();
-        if not output_path: messagebox.showerror("Erreur", "Chemin de sortie requis."); return
+        if not MODULES_LOADED_SUCCESSFULLY: 
+            messagebox.showerror("Erreur", "Modules AICompress non chargés !")
+            return
+        if not self.files_to_compress: 
+            messagebox.showerror("Erreur", "Aucun fichier/dossier à compresser.")
+            return
+        output_path = self.entry_output_aic_path.get()
+        if not output_path: 
+            messagebox.showerror("Erreur", "Chemin de sortie requis.")
+            return
+        
         base, ext = os.path.splitext(output_path)
         if ext.lower() != DEFAULT_AIC_EXTENSION.lower():
-            output_path = base + DEFAULT_AIC_EXTENSION; self.log_message(f"[GUI] Extension {DEFAULT_AIC_EXTENSION} appliquée. Sortie: {output_path}")
-            if self.entry_output_aic_path.winfo_exists(): self.entry_output_aic_path.delete(0,tk.END); self.entry_output_aic_path.insert(0,output_path)
+            output_path = base + DEFAULT_AIC_EXTENSION
+            self.log_message(f"[GUI] Extension {DEFAULT_AIC_EXTENSION} appliquée. Sortie: {output_path}")
+            if self.entry_output_aic_path.winfo_exists():
+                self.entry_output_aic_path.delete(0,tk.END)
+                self.entry_output_aic_path.insert(0,output_path)
+        
         password_for_compression = None
         if self.var_encrypt_aic.get():
             if not CRYPTOGRAPHY_AVAILABLE: messagebox.showerror("Erreur", "Crypto non dispo."); return
@@ -357,31 +387,46 @@ class AICompressGUI:
             if not password_for_compression: messagebox.showerror("Erreur", "Mdp requis si chiffré."); return
             if len(password_for_compression) < 4: messagebox.showwarning("Attention", "Mdp court.")
         
-        self.cancel_event.clear() # Réinitialiser l'événement d'annulation
-        self._set_buttons_state(operation_in_progress_type='compress') # Désactive les actions, active Annuler Comp.
+        # --- NOUVEAU : Lire la valeur de la case à cocher ---
+        optimize_recursively = self.var_recursive_optimize.get() # Renvoie True si cochée, False sinon
+        
+        self.cancel_event.clear()
+        self._set_buttons_state(operation_in_progress_type='compress')
         self.reset_progress_bar() 
-        self.log_message(f"[GUI] Compression vers {output_path} (Chiffré: {'Oui' if password_for_compression else 'Non'})...")
-        thread = threading.Thread(target=self.run_compression, args=(list(self.files_to_compress), output_path, password_for_compression, self.handle_progress_update), daemon=True); thread.start()
+        
+        log_msg_recursive = " (Mode Optimisation d'Archives: Activé)" if optimize_recursively else ""
+        self.log_message(f"[GUI] Compression vers {output_path} (Chiffré: {'Oui' if password_for_compression else 'Non'}){log_msg_recursive}...")
+        
+        thread = threading.Thread(target=self.run_compression, 
+                                  args=(list(self.files_to_compress), 
+                                        output_path, 
+                                        password_for_compression, 
+                                        self.handle_progress_update,
+                                        optimize_recursively), # AJOUT DU NOUVEL ARGUMENT
+                                  daemon=True)
+        thread.start()
 
-    def run_compression(self, files_list, output_aic_path, password_compress, progress_callback_gui):
+    def run_compression(self, files_list, output_aic_path, password_compress, 
+                        progress_callback_gui, optimize_recursively): # AJOUT DU NOUVEL ARGUMENT
         status_msg_for_popup = "Erreur inconnue compression."
         success_flag = False 
         try:
-            # Passer cancel_event à la fonction backend
             success_flag, status_msg_from_core = compress_to_aic(
-                files_list, output_aic_path, 
+                files_list, 
+                output_aic_path, 
                 password_compress=password_compress, 
                 log_callback=self.log_message, 
                 progress_callback=progress_callback_gui,
-                cancel_event=self.cancel_event # Passer l'événement
+                cancel_event=self.cancel_event,
+                recursively_optimize=optimize_recursively # AJOUT : Passer l'option au backend
             )
+            
+            # ... (reste de la fonction run_compression comme avant) ...
             status_msg_for_popup = str(status_msg_from_core)
             if self.cancel_event.is_set():
                 self.log_message("[GUI] Compression annulée par l'utilisateur (détecté dans run_compression).")
                 status_msg_for_popup = "Compression annulée."
                 success_flag = False
-            elif success_flag and callable(progress_callback_gui): 
-                pass # Le backend a déjà mis à 100% via le callback
             
             def _show_msg_comp():
                 if not self.root.winfo_exists(): return
@@ -389,6 +434,7 @@ class AICompressGUI:
                 elif status_msg_for_popup == "Compression annulée.": messagebox.showinfo("Annulé", "La compression a été annulée.")
                 else: messagebox.showerror("Échec", f"Compression échouée.\nMotif: {status_msg_for_popup}")
             if self.root.winfo_exists(): self.root.after(0, _show_msg_comp)
+
         except Exception as e: 
             self.log_message(f"[GUI] Erreur majeure compression: {e}"); import traceback; self.log_message(f"[GUI] Traceback: {traceback.format_exc()}"); 
             status_msg_for_popup = str(e)
@@ -396,7 +442,8 @@ class AICompressGUI:
                 if self.root.winfo_exists(): messagebox.showerror("Erreur Fatale", f"Erreur:\n{msg}")
             if self.root.winfo_exists(): self.root.after(0, _show_fatal_comp)
         finally:
-            if self.root.winfo_exists(): self.root.after(0, self._set_buttons_state, None) # Réactiver tous les boutons
+            if self.root.winfo_exists(): 
+                self.root.after(0, self._set_buttons_state, None) # Réactiver tous les boutons
 
     def start_decompression_thread(self):
         if not MODULES_LOADED_SUCCESSFULLY: 
