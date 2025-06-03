@@ -1,5 +1,4 @@
 # Core ML and Data Handling
-tensorflow # Ou tensorflow-cpu si vous ne ciblez pas l'utilisation du GPU pour l'AE
 scikit-learn
 pandas
 joblib

@@ -48,7 +48,7 @@ class AICompressGUI:
 
     def __init__(self, root_window):
         self.root = root_window
-        self.root.title(f"AICompress v1.2.3 - {DEFAULT_AIC_EXTENSION}")
+        self.root.title(f"AICompress v1.3.0 {DEFAULT_AIC_EXTENSION}")
         
         # Rendre la fenêtre explicitement redimensionnable (valeur par défaut, mais pour être sûr)
         self.root.resizable(True, True) 

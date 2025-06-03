@@ -54,3 +54,4 @@ temp_analyzer_test_files/
 # Fichiers spécifiques à l'OS
 .DS_Store
 Thumbs.db
+history.txt
