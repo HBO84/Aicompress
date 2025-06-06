@@ -91,7 +91,7 @@ This project is under active development and is primarily a field for experiment
 * **AI Analyzer (`aicompress/ai_analyzer.py`):** Determines the file type (text, image, binary, Python script, etc.) and extracts several numerical features: size, normalized entropy, and a "quick compressibility ratio."
 * **Orchestrator AI (`aicompress/orchestrator.py`):** A Machine Learning model (RandomForest) is trained on a pre-computed dataset. It uses the features extracted by the analyzer to predict the "best" compression method (and its level/preset/quality) from the available classic algorithms (STORED, DEFLATE, BZIP2, LZMA, Zstandard, Brotli).
 
-## Roadmap / Future Features (Examples)
+## Roadmap / Future Features
 
 * Continuous improvement of the "Orchestrator AI" accuracy and decision-making.
 * GUI enhancements: Stable window resizing, drag-and-drop functionality.
@@ -102,8 +102,8 @@ This project is under active development and is primarily a field for experiment
 
 ## Contributing
 
-*(Adapt this section if you are open to contributions.)*
-This project is currently a personal development. Suggestions and feedback are welcome via GitHub Issues (once the repository is public).
+
+This project is currently a personal development. Suggestions and feedback are welcome via GitHub Issues.
 
 ## License
 

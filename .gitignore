@@ -55,3 +55,4 @@ temp_analyzer_test_files/
 .DS_Store
 Thumbs.db
 history.txt
+.flake8

@@ -4,22 +4,29 @@ import os
 import json
 import tempfile
 import shutil
+
 # import requests # Dépendance pour télécharger des fichiers depuis une URL
 # import hashlib # Pour vérifier l'intégrité des fichiers
 
 # --- Configuration (Exemples, à adapter plus tard) ---
 # URL d'un fichier JSON sur un serveur qui listerait les modèles et leurs versions
-MODEL_MANIFEST_URL = "https://VOTRE_SERVEUR_OU_GITHUB_RAW_CONTENT_URL/model_manifest.json"
+MODEL_MANIFEST_URL = (
+    "https://VOTRE_SERVEUR_OU_GITHUB_RAW_CONTENT_URL/model_manifest.json"
+)
 # Dossier local où les modèles sont stockés (ex: sous-dossier de ~/.aicompress/models)
 # ou directement dans le package si vous les distribuez avec l'app.
 # Pour l'instant, supposons qu'ils sont dans le package aicompress/
 _MODULE_DIR_OTA = os.path.dirname(__file__)
-MODELS_STORAGE_DIR = os.path.abspath(os.path.join(_MODULE_DIR_OTA, "..", ".aicompress", "models")) # Ex: ~/.aicompress/models
+MODELS_STORAGE_DIR = os.path.abspath(
+    os.path.join(_MODULE_DIR_OTA, "..", ".aicompress", "models")
+)  # Ex: ~/.aicompress/models
 # S'assurer que le dossier des modèles existe
 # os.makedirs(MODELS_STORAGE_DIR, exist_ok=True) # Fait par ai_analyzer.py
 
+
 def _ota_log(message):
     print(f"[OTA_UPDATER] {message}")
+
 
 def check_for_model_updates(log_callback=_ota_log):
     """
@@ -32,7 +39,9 @@ def check_for_model_updates(log_callback=_ota_log):
 
     # Exemple de logique (à remplacer par un vrai appel réseau)
     # Pour l'instant, simulons qu'aucune mise à jour n'est disponible pour éviter les erreurs réseau
-    log_callback("Fonctionnalité OTA non entièrement implémentée : simulation d'aucune mise à jour.")
+    log_callback(
+        "Fonctionnalité OTA non entièrement implémentée : simulation d'aucune mise à jour."
+    )
     return updates_available
 
     # try:
@@ -48,7 +57,7 @@ def check_for_model_updates(log_callback=_ota_log):
     #     # local_text_classifier_version = get_local_model_version("text_classifier")
     #     # if server_manifest.get("text_classifier", {}).get("latest_version") > local_text_classifier_version:
     #     #    updates_available["text_classifier"] = server_manifest["text_classifier"]
-    #     
+    #
     #     if updates_available:
     #         log_callback(f"Mises à jour disponibles: {updates_available}")
     #     else:
@@ -68,9 +77,13 @@ def download_and_install_model(model_name, model_info, log_callback=_ota_log):
     model_info est un dict comme celui retourné par check_for_model_updates pour un modèle.
     Retourne True si succès, False sinon.
     """
-    log_callback(f"Tentative de téléchargement et d'installation pour le modèle: {model_name} (v{model_info.get('latest_version')})")
-    log_callback("Fonctionnalité OTA non entièrement implémentée : simulation d'échec de téléchargement.")
-    return False # Simuler un échec pour l'instant
+    log_callback(
+        f"Tentative de téléchargement et d'installation pour le modèle: {model_name} (v{model_info.get('latest_version')})"
+    )
+    log_callback(
+        "Fonctionnalité OTA non entièrement implémentée : simulation d'échec de téléchargement."
+    )
+    return False  # Simuler un échec pour l'instant
 
     # model_url = model_info.get("url")
     # expected_checksum = model_info.get("checksum") # ex: sha256
@@ -128,9 +141,10 @@ def download_and_install_model(model_name, model_info, log_callback=_ota_log):
     #         os.remove(local_path_temp) # Nettoyer le fichier temporaire
     # return False
 
+
 # --- Flag de disponibilité pour ce module ---
 # Ce flag sera True si les dépendances essentielles (ex: requests) sont là
 # et que le module est prêt à être utilisé (même si la fonctionnalité complète n'est pas là).
 # Pour l'instant, on le met à True si le module est importé.
-OTA_MODULE_AVAILABLE = True 
+OTA_MODULE_AVAILABLE = True
 _ota_log("Module OTA Updater initialisé (fonctions de base présentes).")

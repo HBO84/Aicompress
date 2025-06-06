@@ -78,7 +78,7 @@ Projet en développement actif, principalement à des fins d'expérimentation et
 * **Analyseur d'IA (`aicompress/ai_analyzer.py`) :** Détermine le type de fichier et extrait des caractéristiques (taille, entropie, ratio de compressibilité rapide).
 * **Chef d'Orchestre (`aicompress/orchestrator.py`) :** Un modèle RandomForest utilise ces caractéristiques pour prédire la meilleure méthode de compression classique (STORED, DEFLATE, BZIP2, LZMA, Zstandard, Brotli) et son niveau/qualité.
 
-## Feuille de Route / Fonctionnalités Futures (Exemples)
+## Feuille de Route / Fonctionnalités Futures
 
 * Amélioration continue de l'IA "Chef d'Orchestre".
 * Améliorations GUI : redimensionnement stable de la fenêtre, glisser-déposer.
